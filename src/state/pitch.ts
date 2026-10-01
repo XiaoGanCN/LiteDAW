@@ -1,0 +1,579 @@
+/* ============================================================================
+   LiteDAW · PITCH TRAINER STATE
+   Session engine plus the adaptive weakness model. The model keeps a 12×12
+   pitch-class confusion matrix and a chord-quality confusion matrix, then
+   biases question generation toward the pairs the player actually confuses —
+   across different octaves and different timbres.
+   ========================================================================= */
+
+import { create } from 'zustand';
+import { persist } from 'zustand/middleware';
+import {
+  CHORD_INTERVALS,
+  CHORD_LABELS,
+  SCALES,
+  chordName,
+  midiToFreq,
+  pitchClassName,
+  type ChordQuality,
+  type ScaleName,
+} from '../audio/dsp';
+import type { InstrumentId } from '../audio/synth';
+
+/* ── Types ─────────────────────────────────────────────────────────────── */
+
+export type PitchMode = 'note' | 'chord';
+export type AnswerInput = 'piano' | 'dial';
+export type ChordFlavor = 'major' | 'minor' | 'both' | 'custom';
+export type PlayStyle = 'block' | 'arpeggio';
+
+export interface Question {
+  id: number;
+  kind: PitchMode;
+  /** For note questions: the single MIDI note. */
+  midi: number;
+  /** For chord questions: voiced MIDI notes (may include inversions). */
+  midis: number[];
+  rootPc: number;
+  quality: ChordQuality | null;
+  instrument: InstrumentId | 'sample';
+  sampleId: string | null;
+  /** True when this question was chosen by the weakness model as a drill. */
+  drilled: boolean;
+  drillLabel?: string;
+  askedAt: number;
+}
+
+export interface Attempt {
+  id: number;
+  question: Question;
+  /** Pitch classes the player chose. */
+  answerPcs: number[];
+  answerMidis: number[];
+  correct: boolean;
+  /** 0..1 — full credit, or partial for near misses / right quality wrong root. */
+  score: number;
+  ms: number;
+  at: number;
+}
+
+export interface PitchConfig {
+  mode: PitchMode;
+  chordFlavor: ChordFlavor;
+  qualities: ChordQuality[];
+  chordSize: number;
+  useScale: boolean;
+  scaleRoot: number;
+  scaleName: ScaleName;
+  octaveLow: number;
+  octaveHigh: number;
+  instruments: InstrumentId[];
+  sampleIds: string[];
+  playStyle: PlayStyle;
+  /** Seconds the question sounds for. */
+  sustain: number;
+  answerInput: AnswerInput;
+  /** Play the question again automatically before revealing. */
+  replays: number;
+  /** Show the answer immediately after submitting. */
+  instantFeedback: boolean;
+  /** Adaptive weighting strength, 0 = uniform, 1 = strongly targeted. */
+  adaptivity: number;
+  /** Restrict questions to an explicit drill pair, if set. */
+  focusPair: [number, number] | null;
+  /** Random detune (cents) applied to each question to defeat absolute pitch. */
+  detuneJitter: number;
+  /** Allow inversions / voicings of chords. */
+  inversions: boolean;
+}
+
+export interface PitchStats {
+  total: number;
+  correct: number;
+  score: number;
+  streak: number;
+  bestStreak: number;
+  startedAt: number;
+  /** Rolling latencies in ms. */
+  latency: number[];
+  byPc: { seen: number; correct: number }[];
+  byQuality: Record<string, { seen: number; correct: number }>;
+  byInstrument: Record<string, { seen: number; correct: number }>;
+  byOctave: Record<string, { seen: number; correct: number }>;
+}
+
+export interface ConfusionPair {
+  a: number;
+  b: number;
+  aToB: number;
+  bToA: number;
+  total: number;
+  /** Combined error rate for the pair, 0..1 */
+  error: number;
+}
+
+const emptyStats = (): PitchStats => ({
+  total: 0,
+  correct: 0,
+  score: 0,
+  streak: 0,
+  bestStreak: 0,
+  startedAt: Date.now(),
+  latency: [],
+  byPc: Array.from({ length: 12 }, () => ({ seen: 0, correct: 0 })),
+  byQuality: {},
+  byInstrument: {},
+  byOctave: {},
+});
+
+const emptyMatrix = () => Array.from({ length: 12 }, () => new Array<number>(12).fill(0));
+const emptyQualityMatrix = () => ({} as Record<string, Record<string, number>>);
+
+const DEFAULT_CONFIG: PitchConfig = {
+  mode: 'note',
+  chordFlavor: 'both',
+  qualities: ['maj', 'min'],
+  chordSize: 3,
+  useScale: false,
+  scaleRoot: 0,
+  scaleName: 'major',
+  octaveLow: 3,
+  octaveHigh: 5,
+  instruments: ['piano'],
+  sampleIds: [],
+  playStyle: 'block',
+  sustain: 2.4,
+  answerInput: 'piano',
+  replays: 1,
+  instantFeedback: true,
+  adaptivity: 0.6,
+  focusPair: null,
+  detuneJitter: 0,
+  inversions: false,
+};
+
+/* ── Question generation helpers ───────────────────────────────────────── */
+
+const MAJOR_SET: ChordQuality[] = ['maj', 'maj7', 'dom7', 'aug', 'sus4', 'sus2', 'six', 'add9', 'power'];
+const MINOR_SET: ChordQuality[] = ['min', 'min7', 'dim', 'min7b5', 'min6', 'power'];
+
+export function qualitiesFor(flavor: ChordFlavor, custom: ChordQuality[], size: number): ChordQuality[] {
+  const base =
+    flavor === 'major' ? MAJOR_SET : flavor === 'minor' ? MINOR_SET : flavor === 'custom' ? custom : [...MAJOR_SET, ...MINOR_SET];
+  const unique = [...new Set(base)];
+  const sized = unique.filter((q) => CHORD_INTERVALS[q].length === size);
+  return sized.length ? sized : unique;
+}
+
+/** Every pitch class the current scale/range combination permits. */
+export function allowedPcs(cfg: PitchConfig): number[] {
+  if (!cfg.useScale) return Array.from({ length: 12 }, (_, i) => i);
+  const set = SCALES[cfg.scaleName] as readonly number[];
+  return set.map((i) => (cfg.scaleRoot + i) % 12);
+}
+
+export function rangeMidis(cfg: PitchConfig): number[] {
+  const out: number[] = [];
+  const lo = Math.min(cfg.octaveLow, cfg.octaveHigh);
+  const hi = Math.max(cfg.octaveLow, cfg.octaveHigh);
+  for (let o = lo; o <= hi; o++) {
+    for (let pc = 0; pc < 12; pc++) out.push((o + 1) * 12 + pc);
+  }
+  return out;
+}
+
+/** Weighted pick using a random source. */
+function pickWeighted<T>(items: T[], weights: number[], rnd = Math.random): T {
+  const total = weights.reduce((a, b) => a + b, 0);
+  if (total <= 0) return items[Math.floor(rnd() * items.length)];
+  let r = rnd() * total;
+  for (let i = 0; i < items.length; i++) {
+    r -= weights[i];
+    if (r <= 0) return items[i];
+  }
+  return items[items.length - 1];
+}
+
+/* ── Store ─────────────────────────────────────────────────────────────── */
+
+interface PitchStore {
+  cfg: PitchConfig;
+  question: Question | null;
+  phase: 'idle' | 'playing' | 'answering' | 'revealed';
+  attempts: Attempt[];
+  stats: PitchStats;
+  confusion: number[][];
+  qualityConfusion: Record<string, Record<string, number>>;
+  /** True when the last answer was correct, for UI feedback. */
+  lastResult: { correct: boolean; score: number } | null;
+  /** Frozen snapshot of the previous question for the A/B replay button. */
+  previous: Question | null;
+
+  setCfg: <K extends keyof PitchConfig>(key: K, value: PitchConfig[K]) => void;
+  resetConfig: () => void;
+  setPhase: (p: PitchStore['phase']) => void;
+  nextQuestion: () => Question;
+  setQuestion: (q: Question | null) => void;
+  record: (a: Attempt) => void;
+  resetSession: () => void;
+  resetModel: () => void;
+  /** Ranked list of the pairs the player most often confuses. */
+  weakPairs: (limit?: number) => ConfusionPair[];
+  /** Per-pitch-class accuracy, 0..1 (null when unseen). */
+  pcAccuracy: () => (number | null)[];
+  accuracy: () => number;
+  exportProfile: () => string;
+  importProfile: (json: string) => boolean;
+}
+
+let qid = 1;
+
+export const usePitch = create<PitchStore>()(
+  persist(
+    (set, get) => ({
+      cfg: { ...DEFAULT_CONFIG },
+      question: null,
+      phase: 'idle',
+      attempts: [],
+      stats: emptyStats(),
+      confusion: emptyMatrix(),
+      qualityConfusion: emptyQualityMatrix(),
+      lastResult: null,
+      previous: null,
+
+      setCfg: (key, value) => set((s) => ({ cfg: { ...s.cfg, [key]: value } })),
+      resetConfig: () => set({ cfg: { ...DEFAULT_CONFIG } }),
+      setPhase: (phase) => set({ phase }),
+      setQuestion: (question) => set({ question }),
+
+      nextQuestion: () => {
+        const { cfg, confusion } = get();
+        const instrChoices: (InstrumentId | 'sample')[] = [...cfg.instruments];
+        if (cfg.sampleIds.length) instrChoices.push('sample');
+        const instrument = instrChoices.length
+          ? instrChoices[Math.floor(Math.random() * instrChoices.length)]
+          : 'piano';
+        const sampleId = instrument === 'sample' ? cfg.sampleIds[Math.floor(Math.random() * cfg.sampleIds.length)] ?? null : null;
+
+        const pool = rangeMidis(cfg);
+        const pcs = new Set(allowedPcs(cfg));
+
+        let drilled = false;
+        let drillLabel: string | undefined;
+
+        if (cfg.mode === 'note') {
+          /* ── Weakness-weighted pitch class choice ───────────────────── */
+          const candidates = Array.from({ length: 12 }, (_, i) => i).filter((pc) => pcs.has(pc));
+          const rowTotals = confusion.map((row) => row.reduce((a, b) => a + b, 0));
+          const rowErr = confusion.map((row, i) => {
+            const tot = rowTotals[i];
+            if (tot < 2) return 0.35; // unseen classes get a mild curiosity bonus
+            const off = row.reduce((a, b, j) => (i === j ? a : a + b), 0);
+            return off / tot;
+          });
+
+          let targetPc: number;
+          const focus = cfg.focusPair;
+          const rnd = Math.random();
+          if (focus && rnd < 0.75) {
+            targetPc = Math.random() < 0.5 ? focus[0] : focus[1];
+            drilled = true;
+            drillLabel = `${pitchClassName(focus[0])} vs ${pitchClassName(focus[1])}`;
+          } else if (rnd < cfg.adaptivity) {
+            const weights = candidates.map((pc) => 0.25 + rowErr[pc] * 3.4);
+            targetPc = pickWeighted(candidates, weights);
+            drilled = rowErr[targetPc] > 0.5;
+            if (drilled) drillLabel = `weakest class ${pitchClassName(targetPc)}`;
+          } else {
+            targetPc = candidates[Math.floor(Math.random() * candidates.length)];
+          }
+
+          const noteChoices = pool.filter((m) => ((m % 12) + 12) % 12 === targetPc);
+          const midi = noteChoices.length
+            ? noteChoices[Math.floor(Math.random() * noteChoices.length)]
+            : 60 + targetPc;
+
+          const q: Question = {
+            id: qid++,
+            kind: 'note',
+            midi,
+            midis: [midi],
+            rootPc: targetPc,
+            quality: null,
+            instrument,
+            sampleId,
+            drilled,
+            drillLabel,
+            askedAt: Date.now(),
+          };
+          set((s) => ({ question: q, previous: s.question, phase: 'playing', lastResult: null }));
+          return q;
+        }
+
+        /* ── Chord question ──────────────────────────────────────────── */
+        const qs = qualitiesFor(cfg.chordFlavor, cfg.qualities, cfg.chordSize);
+        const roots = Array.from({ length: 12 }, (_, i) => i).filter((pc) => pcs.has(pc));
+        const qc = get().qualityConfusion;
+        const qualityWeights = qs.map((q) => {
+          const row = qc[q] ?? {};
+          const tot = Object.values(row).reduce((a, b) => a + b, 0);
+          if (tot < 2) return 1;
+          const ok = row[q] ?? 0;
+          return 0.3 + (1 - ok / tot) * 3;
+        });
+        const quality = pickWeighted(qs, qualityWeights);
+        const rootPc = roots[Math.floor(Math.random() * roots.length)];
+        const octPool = pool.filter((m) => ((m % 12) + 12) % 12 === rootPc);
+        const rootMidi = octPool.length ? octPool[Math.floor(Math.random() * octPool.length)] : 60 + rootPc;
+        let midis = CHORD_INTERVALS[quality].map((i) => rootMidi + i);
+
+        if (cfg.inversions && midis.length > 2 && Math.random() < 0.5) {
+          const inv = 1 + Math.floor(Math.random() * (midis.length - 1));
+          for (let i = 0; i < inv; i++) midis[i] += 12;
+          midis = midis.sort((a, b) => a - b);
+        }
+        midis = midis.filter((m) => m <= 108);
+
+        const q: Question = {
+          id: qid++,
+          kind: 'chord',
+          midi: rootMidi,
+          midis,
+          rootPc,
+          quality,
+          instrument,
+          sampleId,
+          drilled: false,
+          askedAt: Date.now(),
+        };
+        set((s) => ({ question: q, previous: s.question, phase: 'playing', lastResult: null }));
+        return q;
+      },
+
+      record: (a) =>
+        set((s) => {
+          const stats: PitchStats = {
+            ...s.stats,
+            total: s.stats.total + 1,
+            correct: s.stats.correct + (a.correct ? 1 : 0),
+            score: s.stats.score + a.score,
+            streak: a.correct ? s.stats.streak + 1 : 0,
+            bestStreak: Math.max(s.stats.bestStreak, a.correct ? s.stats.streak + 1 : 0),
+            latency: [...s.stats.latency.slice(-199), a.ms],
+            byPc: s.stats.byPc.map((v, i) =>
+              i === a.question.rootPc ? { seen: v.seen + 1, correct: v.correct + (a.correct ? 1 : 0) } : v,
+            ),
+            byQuality: { ...s.stats.byQuality },
+            byInstrument: { ...s.stats.byInstrument },
+            byOctave: { ...s.stats.byOctave },
+          };
+
+          if (a.question.quality) {
+            const k = a.question.quality;
+            const prev = stats.byQuality[k] ?? { seen: 0, correct: 0 };
+            stats.byQuality[k] = { seen: prev.seen + 1, correct: prev.correct + (a.correct ? 1 : 0) };
+          }
+          const ikey = String(a.question.instrument);
+          const iprev = stats.byInstrument[ikey] ?? { seen: 0, correct: 0 };
+          stats.byInstrument[ikey] = { seen: iprev.seen + 1, correct: iprev.correct + (a.correct ? 1 : 0) };
+          const okey = String(Math.floor(a.question.midi / 12) - 1);
+          const oprev = stats.byOctave[okey] ?? { seen: 0, correct: 0 };
+          stats.byOctave[okey] = { seen: oprev.seen + 1, correct: oprev.correct + (a.correct ? 1 : 0) };
+
+          /* ── Update the confusion model ─────────────────────────────── */
+          const confusion = s.confusion.map((r) => r.slice());
+          const qualityConfusion = { ...s.qualityConfusion };
+          if (a.question.kind === 'note' && a.answerPcs.length) {
+            const target = a.question.rootPc;
+            // Credit the closest answered class so a near miss is recorded as
+            // "C heard as C#" rather than as an unrelated error.
+            const nearest = a.answerPcs.reduce((best, pc) => {
+              const d = Math.min(Math.abs(pc - target), 12 - Math.abs(pc - target));
+              const bd = Math.min(Math.abs(best - target), 12 - Math.abs(best - target));
+              return d < bd ? pc : best;
+            }, a.answerPcs[0]);
+            confusion[target][nearest] += 1;
+          }
+          if (a.question.kind === 'chord' && a.question.quality) {
+            const row = { ...(qualityConfusion[a.question.quality] ?? {}) };
+            const ansKey = a.correct
+              ? a.question.quality
+              : guessQualityFromPcs(a.answerPcs, a.question.rootPc) ?? 'other';
+            row[ansKey] = (row[ansKey] ?? 0) + 1;
+            qualityConfusion[a.question.quality] = row;
+          }
+
+          return {
+            attempts: [...s.attempts.slice(-299), a],
+            stats,
+            confusion,
+            qualityConfusion,
+            phase: 'revealed' as const,
+            lastResult: { correct: a.correct, score: a.score },
+          };
+        }),
+
+      resetSession: () =>
+        set({
+          attempts: [],
+          stats: emptyStats(),
+          question: null,
+          phase: 'idle',
+          lastResult: null,
+          previous: null,
+        }),
+
+      resetModel: () => set({ confusion: emptyMatrix(), qualityConfusion: emptyQualityMatrix() }),
+
+      weakPairs: (limit = 6) => {
+        const m = get().confusion;
+        const out: ConfusionPair[] = [];
+        for (let a = 0; a < 12; a++) {
+          for (let b = a + 1; b < 12; b++) {
+            const aToB = m[a][b];
+            const bToA = m[b][a];
+            const total = aToB + bToA;
+            if (total === 0) continue;
+            const seenA = m[a].reduce((x, y) => x + y, 0);
+            const seenB = m[b].reduce((x, y) => x + y, 0);
+            const denom = Math.max(1, Math.min(seenA, seenB));
+            out.push({ a, b, aToB, bToA, total, error: Math.min(1, total / denom) });
+          }
+        }
+        return out.sort((x, y) => y.total * y.error - x.total * x.error).slice(0, limit);
+      },
+
+      pcAccuracy: () => {
+        const { confusion } = get();
+        return confusion.map((row, i) => {
+          const tot = row.reduce((a, b) => a + b, 0);
+          if (tot === 0) return null;
+          return row[i] / tot;
+        });
+      },
+
+      accuracy: () => {
+        const s = get().stats;
+        return s.total ? s.correct / s.total : 0;
+      },
+
+      exportProfile: () => {
+        const { stats, confusion, qualityConfusion, cfg } = get();
+        return JSON.stringify(
+          { version: 1, exportedAt: new Date().toISOString(), stats, confusion, qualityConfusion, cfg },
+          null,
+          2,
+        );
+      },
+
+      importProfile: (json) => {
+        try {
+          const data = JSON.parse(json) as Partial<{
+            stats: PitchStats;
+            confusion: number[][];
+            qualityConfusion: Record<string, Record<string, number>>;
+            cfg: PitchConfig;
+          }>;
+          set((s) => ({
+            stats: data.stats ?? s.stats,
+            confusion: data.confusion ?? s.confusion,
+            qualityConfusion: data.qualityConfusion ?? s.qualityConfusion,
+            cfg: data.cfg ? { ...s.cfg, ...data.cfg } : s.cfg,
+          }));
+          return true;
+        } catch {
+          return false;
+        }
+      },
+    }),
+    {
+      name: 'litedaw.pitch',
+      version: 3,
+      partialize: (s) => ({
+        cfg: s.cfg,
+        stats: s.stats,
+        confusion: s.confusion,
+        qualityConfusion: s.qualityConfusion,
+      }),
+    },
+  ),
+);
+
+/** Best-effort reverse lookup of which chord quality a pitch-class set spells. */
+function guessQualityFromPcs(pcs: number[], rootPc: number): ChordQuality | null {
+  if (!pcs.length) return null;
+  const rel = [...new Set(pcs.map((pc) => ((pc - rootPc) % 12 + 12) % 12))].sort((a, b) => a - b);
+  let best: ChordQuality | null = null;
+  let bestScore = Infinity;
+  (Object.keys(CHORD_INTERVALS) as ChordQuality[]).forEach((q) => {
+    const iv = [...new Set(CHORD_INTERVALS[q].map((i) => i % 12))].sort((a, b) => a - b);
+    const missing = iv.filter((x) => !rel.includes(x)).length;
+    const extra = rel.filter((x) => !iv.includes(x)).length;
+    const score = missing + extra;
+    if (score < bestScore) {
+      bestScore = score;
+      best = q;
+    }
+  });
+  return best;
+}
+
+/* ── Scoring ───────────────────────────────────────────────────────────── */
+
+export interface GradeInput {
+  question: Question;
+  answerMidis: number[];
+  ms: number;
+}
+
+export interface GradeResult {
+  correct: boolean;
+  score: number;
+  detail: string;
+}
+
+/** Grades an answer with partial credit for near misses and right-set-wrong-root. */
+export function gradeAnswer({ question, answerMidis, ms }: GradeInput): GradeResult {
+  const ansPcs = [...new Set(answerMidis.map((m) => ((m % 12) + 12) % 12))];
+  const targetPcs = [...new Set(question.midis.map((m) => ((m % 12) + 12) % 12))];
+
+  if (question.kind === 'note') {
+    const target = question.rootPc;
+    if (ansPcs.length === 0) return { correct: false, score: 0, detail: 'No answer given' };
+    const hit = ansPcs.includes(target);
+    if (hit) {
+      const speedBonus = ms < 1600 ? 1 : ms < 3200 ? 0.96 : 0.92;
+      return { correct: true, score: speedBonus, detail: `${pitchClassName(target)} — correct` };
+    }
+    const dist = Math.min(...ansPcs.map((pc) => Math.min(Math.abs(pc - target), 12 - Math.abs(pc - target))));
+    const partial = dist === 1 ? 0.35 : dist === 2 ? 0.15 : 0;
+    return {
+      correct: false,
+      score: partial,
+      detail: `Heard ${ansPcs.map(pitchClassName).join('/')} · target ${pitchClassName(target)} (${dist} semitone${dist > 1 ? 's' : ''} off)`,
+    };
+  }
+
+  const setMatch = ansPcs.length === targetPcs.length && targetPcs.every((pc) => ansPcs.includes(pc));
+  const q = question.quality;
+  if (setMatch && q) {
+    return { correct: true, score: 1, detail: `${chordName(question.midi, q)} — correct` };
+  }
+  // Right root, wrong quality
+  if (q && ansPcs.includes(question.rootPc) && ansPcs.length >= 2) {
+    return {
+      correct: false,
+      score: 0.4,
+      detail: `Root correct, quality off — target ${chordName(question.midi, q)}`,
+    };
+  }
+  return {
+    correct: false,
+    score: 0,
+    detail: q ? `Target ${chordName(question.midi, q)}` : 'Incorrect',
+  };
+}
+
+export const chordLabel = (q: ChordQuality) => CHORD_LABELS[q];
+export const noteFrequency = midiToFreq;
+export const ALL_QUALITIES = Object.keys(CHORD_INTERVALS) as ChordQuality[];

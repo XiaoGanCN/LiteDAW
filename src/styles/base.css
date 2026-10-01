@@ -1,0 +1,449 @@
+/* ============================================================================
+   LiteDAW · BASE — reset, type language, texture surfaces, global FX stack
+   ========================================================================= */
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+html {
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+body {
+  background: var(--void);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+  line-height: 1.45;
+  font-feature-settings: 'tnum' 1, 'lnum' 1, 'ss01' 1;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+  overscroll-behavior: none;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#root {
+  isolation: isolate;
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: inherit;
+}
+
+button {
+  background: none;
+  border: 0;
+  padding: 0;
+  cursor: pointer;
+}
+
+a {
+  color: inherit;
+  text-decoration: none;
+}
+
+ul,
+ol {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+::selection {
+  background: color-mix(in srgb, var(--red) 55%, transparent);
+  color: #fff;
+}
+
+:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 2px;
+  border-radius: var(--r-xs);
+}
+
+/* ── Scrollbars: instrument-grade ─────────────────────────────────────── */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--carbon-400) transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.4);
+}
+::-webkit-scrollbar-thumb {
+  background: linear-gradient(180deg, var(--carbon-400), var(--carbon-600));
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: var(--r-pill);
+}
+::-webkit-scrollbar-thumb:hover {
+  background: linear-gradient(180deg, var(--alu-700), var(--carbon-500));
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+
+/* ============================================================================
+   TYPE LANGUAGE
+   Every level carries the design language: condensed tracked labels,
+   squared display faces for readouts, tabular mono for numerics.
+   ========================================================================= */
+
+.t-display {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: var(--tr-tight);
+  text-transform: uppercase;
+}
+
+.t-label {
+  font-family: var(--font-label);
+  font-weight: 600;
+  font-size: var(--fs-label);
+  letter-spacing: var(--tr-label);
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  line-height: 1;
+}
+
+.t-micro {
+  font-family: var(--font-label);
+  font-weight: 600;
+  font-size: var(--fs-micro);
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+  line-height: 1;
+}
+
+.t-readout {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  color: var(--alu-100);
+}
+
+.t-num {
+  font-family: var(--font-display);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+}
+
+.t-body {
+  font-family: var(--font-ui);
+  font-size: var(--fs-body);
+  color: var(--ink-2);
+}
+
+.t-hint {
+  font-family: var(--font-ui);
+  font-size: var(--fs-sm);
+  color: var(--ink-dim);
+}
+
+/* Engraved / silk-screen text, as on real panel hardware. */
+.t-engrave {
+  color: var(--ink-dim);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.07);
+}
+
+/* ============================================================================
+   TEXTURES
+   ========================================================================= */
+
+/* 2×2 twill carbon fibre weave. */
+.tex-carbon {
+  background-color: var(--carbon-900);
+  background-image:
+    repeating-linear-gradient(
+      45deg,
+      rgba(255, 255, 255, 0.028) 0 1px,
+      transparent 1px 4px
+    ),
+    repeating-linear-gradient(
+      -45deg,
+      rgba(0, 0, 0, 0.34) 0 1px,
+      transparent 1px 4px
+    ),
+    repeating-linear-gradient(
+      45deg,
+      rgba(255, 255, 255, 0.016) 0 2px,
+      transparent 2px 8px
+    ),
+    repeating-linear-gradient(-45deg, rgba(0, 0, 0, 0.24) 0 2px, transparent 2px 8px),
+    linear-gradient(160deg, #12171c 0%, #0a0d10 55%, #0e1216 100%);
+  background-size: 8px 8px, 8px 8px, 16px 16px, 16px 16px, 100% 100%;
+}
+
+/* Fine twill at a tighter pitch for small chrome. */
+.tex-carbon-fine {
+  background-color: var(--carbon-850);
+  background-image:
+    repeating-linear-gradient(45deg, rgba(255, 255, 255, 0.022) 0 1px, transparent 1px 3px),
+    repeating-linear-gradient(-45deg, rgba(0, 0, 0, 0.3) 0 1px, transparent 1px 3px),
+    linear-gradient(180deg, #12171c, #0b0e12);
+  background-size: 6px 6px, 6px 6px, 100% 100%;
+}
+
+/* Brushed / turned aluminium. */
+.tex-alu {
+  background-color: var(--alu-700);
+  background-image:
+    repeating-linear-gradient(
+      90deg,
+      rgba(255, 255, 255, 0.055) 0 1px,
+      rgba(0, 0, 0, 0.05) 1px 3px
+    ),
+    linear-gradient(
+      180deg,
+      rgba(255, 255, 255, 0.34) 0%,
+      rgba(255, 255, 255, 0.06) 34%,
+      rgba(0, 0, 0, 0.16) 62%,
+      rgba(255, 255, 255, 0.12) 100%
+    );
+}
+
+/* Anodised aluminium bezel — used for panel frames and the transport bar. */
+.tex-bezel {
+  background-image:
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.03) 0 1px, transparent 1px 2px),
+    linear-gradient(180deg, #3b444d 0%, #232a31 8%, #171d22 46%, #1d242a 82%, #333b43 100%);
+}
+
+/* Glass well: recessed dark cavity that readouts sit in. */
+.tex-well {
+  background:
+    radial-gradient(120% 90% at 50% -10%, rgba(120, 160, 190, 0.09), transparent 62%),
+    linear-gradient(180deg, #05070a 0%, #0a0e12 100%);
+  box-shadow: var(--sh-inset-well);
+}
+
+/* Frutiger-Aero glass: only ever a whisper, on overlays and floating chrome. */
+.tex-aero {
+  background-image:
+    radial-gradient(140% 70% at 12% -18%, rgba(127, 227, 255, calc(0.16 * var(--fx-aero))), transparent 58%),
+    radial-gradient(120% 80% at 88% 118%, rgba(46, 134, 255, calc(0.12 * var(--fx-aero))), transparent 62%),
+    linear-gradient(180deg, rgba(255, 255, 255, 0.055), transparent 42%);
+}
+
+/* ============================================================================
+   GLOBAL FX STACK — the semi-realistic artifact / defect layer
+   Cheap, GPU-only compositing: scanlines, sensor grain, chroma bleed,
+   vignette, phosphor bloom. Fully disabled in pristine mode.
+   ========================================================================= */
+
+.fx-stack {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  pointer-events: none;
+  contain: strict;
+}
+
+.fx-stack > * {
+  position: absolute;
+  inset: 0;
+}
+
+/* Interlaced scanlines. */
+.fx-scan {
+  opacity: var(--fx-scan);
+  background-image: repeating-linear-gradient(
+    180deg,
+    rgba(255, 255, 255, 0.9) 0 1px,
+    transparent 1px 3px
+  );
+  mix-blend-mode: overlay;
+}
+
+/* Very slow rolling refresh bar. */
+.fx-roll {
+  opacity: calc(var(--fx-scan) * 0.9);
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.14) 46%,
+    rgba(255, 255, 255, 0.2) 50%,
+    rgba(255, 255, 255, 0.14) 54%,
+    transparent 100%
+  );
+  height: 26%;
+  mix-blend-mode: overlay;
+  animation: fx-roll 9.5s linear infinite;
+  will-change: transform;
+}
+@keyframes fx-roll {
+  from {
+    transform: translate3d(0, -30%, 0);
+  }
+  to {
+    transform: translate3d(0, 400%, 0);
+  }
+}
+
+/* Sensor grain — static SVG turbulence tile, jittered by transform steps. */
+.fx-noise {
+  opacity: var(--fx-noise);
+  mix-blend-mode: overlay;
+  background-image: var(--fx-noise-tile);
+  background-size: 190px 190px;
+  animation: fx-jitter 0.9s steps(6) infinite;
+  will-change: transform;
+}
+@keyframes fx-jitter {
+  0% {
+    transform: translate3d(0, 0, 0);
+  }
+  20% {
+    transform: translate3d(-3%, 2%, 0);
+  }
+  40% {
+    transform: translate3d(2%, -3%, 0);
+  }
+  60% {
+    transform: translate3d(-2%, -2%, 0);
+  }
+  80% {
+    transform: translate3d(3%, 1%, 0);
+  }
+  100% {
+    transform: translate3d(0, 0, 0);
+  }
+}
+
+/* Lateral chromatic aberration on the frame edges (lens defect). */
+.fx-chroma::before,
+.fx-chroma::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  opacity: calc(var(--fx-chroma) * 0.5);
+  mix-blend-mode: screen;
+}
+.fx-chroma::before {
+  background: linear-gradient(90deg, rgba(255, 45, 71, 0.32), transparent 8%);
+  transform: translate3d(-1px, 0, 0);
+}
+.fx-chroma::after {
+  background: linear-gradient(270deg, rgba(31, 208, 230, 0.3), transparent 8%);
+  transform: translate3d(1px, 0, 0);
+}
+
+/* Phosphor / lens bloom around hot areas. */
+.fx-bloom {
+  opacity: calc(var(--fx-bloom) * 0.5);
+  background:
+    radial-gradient(90% 55% at 50% 108%, rgba(199, 15, 40, 0.16), transparent 68%),
+    radial-gradient(70% 45% at 8% 0%, rgba(31, 208, 230, 0.1), transparent 66%);
+  mix-blend-mode: screen;
+}
+
+/* Vignette + corner falloff. */
+.fx-vignette {
+  opacity: var(--fx-vignette);
+  background:
+    radial-gradient(130% 110% at 50% 46%, transparent 42%, rgba(0, 0, 0, 0.42) 82%, rgba(0, 0, 0, 0.72) 100%);
+}
+
+/* Aero sheen across the top glass. */
+.fx-aero {
+  opacity: var(--fx-aero);
+  background: linear-gradient(
+    170deg,
+    rgba(143, 230, 255, 0.09) 0%,
+    rgba(143, 230, 255, 0.03) 14%,
+    transparent 34%
+  );
+}
+
+/* SVG filter applied to opt-in surfaces for a true displacement defect. */
+.fx-defect {
+  filter: url(#litedaw-defect);
+}
+:root[data-fx='off'] .fx-defect {
+  filter: none;
+}
+
+/* Utility used by canvases to read the FX state from JS. */
+.fx-probe {
+  position: fixed;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ── Shared micro-animations ──────────────────────────────────────────── */
+@keyframes pulse-glow {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.42;
+  }
+}
+@keyframes sweep-x {
+  from {
+    transform: translate3d(-110%, 0, 0);
+  }
+  to {
+    transform: translate3d(210%, 0, 0);
+  }
+}
+@keyframes spin-ccw {
+  to {
+    transform: rotate(-360deg);
+  }
+}
+@keyframes rise-in {
+  from {
+    opacity: 0;
+    transform: translate3d(0, 8px, 0);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+@keyframes boot-sweep {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+  to {
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}

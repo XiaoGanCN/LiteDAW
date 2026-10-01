@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="plate" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#171d22"/><stop offset="55%" stop-color="#0b0f12"/><stop offset="100%" stop-color="#10151a"/>
+    </linearGradient>
+    <linearGradient id="alu" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/><stop offset="42%" stop-color="#d5dee6"/><stop offset="100%" stop-color="#8f9aa5"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="50%" cy="58%" r="52%">
+      <stop offset="0%" stop-color="#ff2d47" stop-opacity=".55"/><stop offset="100%" stop-color="#c70f28" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#plate)"/>
+  <rect width="512" height="512" rx="112" fill="url(#glow)"/>
+  <g fill="none" stroke="url(#alu)" stroke-width="30" stroke-linejoin="miter">
+    <path d="M256 78 76 400h96l84-142 84 142h96L256 78Z"/>
+  </g>
+  <g fill="none" stroke="url(#alu)" stroke-width="26" stroke-linejoin="miter">
+    <path d="M256 238 148 400h60l48-82 48 82h60L256 238Z"/>
+  </g>
+  <rect x="88" y="430" width="336" height="22" rx="4" fill="url(#alu)"/>
+</svg>

@@ -1,0 +1,174 @@
+/* ============================================================================
+   LiteDAW · DESIGN TOKENS
+   Avionics / automotive-sport flat system.
+   Carbon-fibre ground · machined-aluminium trim · saturated signalling colour.
+   ========================================================================= */
+
+:root {
+  /* ── Carbon ground ────────────────────────────────────────────────────── */
+  --void: #06080a;
+  --carbon-950: #090c0f;
+  --carbon-900: #0d1114;
+  --carbon-850: #101519;
+  --carbon-800: #141a1f;
+  --carbon-700: #1a2127;
+  --carbon-600: #212a31;
+  --carbon-500: #2a343c;
+  --carbon-400: #354049;
+  --carbon-300: #445059;
+
+  /* ── Machined aluminium ───────────────────────────────────────────────── */
+  --alu-900: #3b434b;
+  --alu-800: #4d565f;
+  --alu-700: #616b75;
+  --alu-600: #78838e;
+  --alu-500: #8f9aa5;
+  --alu-400: #a7b2bd;
+  --alu-300: #bfc9d4;
+  --alu-200: #d5dee6;
+  --alu-100: #e8eef4;
+  --alu-050: #f6f9fc;
+
+  /* ── Signal palette (avionics PFD/ND + sport livery) ──────────────────── */
+  --red: #c70f28;
+  --red-hi: #ff2d47;
+  --red-lo: #7c0817;
+  --red-deep: #48040d;
+
+  --amber: #ffae1a;
+  --amber-hi: #ffd166;
+  --amber-lo: #a86c00;
+
+  --green: #22e07c;
+  --green-hi: #7dffb8;
+  --green-lo: #0c8a48;
+
+  --cyan: #1fd0e6;
+  --cyan-hi: #86f0ff;
+  --cyan-lo: #087f92;
+
+  --blue: #2e86ff;
+  --blue-hi: #8dc0ff;
+  --blue-lo: #14479c;
+
+  --magenta: #ff3dce;
+  --violet: #8a6bff;
+  --aero: #7fe3ff;
+
+  /* ── Semantic ink ─────────────────────────────────────────────────────── */
+  --ink: var(--alu-100);
+  --ink-2: var(--alu-300);
+  --ink-dim: var(--alu-500);
+  --ink-faint: var(--alu-700);
+  --ink-ghost: #4a545e;
+  --ink-on-red: #fff2f4;
+
+  /* ── Structure ────────────────────────────────────────────────────────── */
+  --hair: rgba(196, 214, 230, 0.09);
+  --hair-2: rgba(196, 214, 230, 0.16);
+  --hair-3: rgba(196, 214, 230, 0.26);
+  --edge-hi: rgba(255, 255, 255, 0.14);
+  --edge-lo: rgba(0, 0, 0, 0.66);
+
+  --r-xs: 2px;
+  --r-sm: 4px;
+  --r-md: 7px;
+  --r-lg: 11px;
+  --r-xl: 16px;
+  --r-pill: 999px;
+
+  --sp-1: 4px;
+  --sp-2: 7px;
+  --sp-3: 11px;
+  --sp-4: 15px;
+  --sp-5: 21px;
+  --sp-6: 28px;
+  --sp-7: 38px;
+
+  /* ── Type ─────────────────────────────────────────────────────────────── */
+  --font-display: 'Chakra Petch', 'Rajdhani', 'DIN Alternate', system-ui, sans-serif;
+  --font-ui: 'Barlow', 'Inter', system-ui, -apple-system, sans-serif;
+  --font-label: 'Barlow Condensed', 'Oswald', 'Arial Narrow', sans-serif;
+  --font-mono: 'Share Tech Mono', 'JetBrains Mono', ui-monospace, monospace;
+
+  --fs-micro: 9px;
+  --fs-tiny: 10px;
+  --fs-label: 11px;
+  --fs-sm: 12px;
+  --fs-body: 13.5px;
+  --fs-md: 15px;
+  --fs-lg: 19px;
+  --fs-xl: 25px;
+  --fs-2xl: 34px;
+  --fs-3xl: 48px;
+  --fs-huge: clamp(46px, 9vw, 92px);
+
+  --tr-label: 0.16em;
+  --tr-tight: -0.01em;
+  --tr-wide: 0.06em;
+
+  /* ── Depth ────────────────────────────────────────────────────────────── */
+  --sh-inset-top: inset 0 1px 0 var(--edge-hi);
+  --sh-inset-well: inset 0 2px 5px rgba(0, 0, 0, 0.72), inset 0 -1px 0 rgba(255, 255, 255, 0.05);
+  --sh-1: 0 1px 2px rgba(0, 0, 0, 0.55);
+  --sh-2: 0 4px 12px rgba(0, 0, 0, 0.5);
+  --sh-3: 0 14px 38px rgba(0, 0, 0, 0.62), 0 2px 6px rgba(0, 0, 0, 0.5);
+  --sh-4: 0 28px 70px rgba(0, 0, 0, 0.7);
+
+  /* ── Glow (used only where attention is required) ─────────────────────── */
+  --glow-red: 0 0 10px rgba(199, 15, 40, 0.6), 0 0 30px rgba(199, 15, 40, 0.28);
+  --glow-red-strong: 0 0 6px rgba(255, 45, 71, 0.9), 0 0 18px rgba(199, 15, 40, 0.7),
+    0 0 48px rgba(199, 15, 40, 0.36);
+  --glow-amber: 0 0 10px rgba(255, 174, 26, 0.55), 0 0 28px rgba(255, 174, 26, 0.22);
+  --glow-green: 0 0 10px rgba(34, 224, 124, 0.5), 0 0 26px rgba(34, 224, 124, 0.22);
+  --glow-cyan: 0 0 10px rgba(31, 208, 230, 0.5), 0 0 26px rgba(31, 208, 230, 0.22);
+  --text-glow-red: 0 0 12px rgba(255, 45, 71, 0.55);
+  --text-glow-cyan: 0 0 12px rgba(31, 208, 230, 0.5);
+
+  /* ── Motion ───────────────────────────────────────────────────────────── */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --ease-snap: cubic-bezier(0.34, 1.42, 0.5, 1);
+  --ease-mech: cubic-bezier(0.2, 0.9, 0.1, 1);
+  --t-fast: 110ms;
+  --t-base: 190ms;
+  --t-slow: 320ms;
+  --t-slab: 520ms;
+
+  /* ── Geometry ─────────────────────────────────────────────────────────── */
+  --rail-w: 74px;
+  --topbar-h: 54px;
+  --inspector-w: 320px;
+
+  /* ── FX (artifact / defect layer) ─────────────────────────────────────── */
+  --fx: 1; /* master multiplier: 0 = pristine, 1 = full semi-realism */
+  --fx-scan: 0.055;
+  --fx-noise: 0.05;
+  --fx-vignette: 0.55;
+  --fx-chroma: 0.5;
+  --fx-bloom: 0.4;
+  --fx-aero: 0.5;
+
+  color-scheme: dark;
+}
+
+/* Pristine mode zeroes every defect channel at once. */
+:root[data-fx='off'] {
+  --fx: 0;
+  --fx-scan: 0;
+  --fx-noise: 0;
+  --fx-vignette: 0;
+  --fx-chroma: 0;
+  --fx-bloom: 0;
+  --fx-aero: 0.24;
+}
+
+/* Reduced-data / low-power screens keep the layout, drop the grain. */
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --t-fast: 1ms;
+    --t-base: 1ms;
+    --t-slow: 1ms;
+    --t-slab: 1ms;
+  }
+}

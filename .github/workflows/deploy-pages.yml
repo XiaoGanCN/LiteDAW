@@ -1,0 +1,65 @@
+# Build LiteDAW and publish the static bundle to GitHub Pages.
+#
+# Why this works without any base-path configuration: `vite.config.ts` sets
+# `base: './'`, so every emitted asset reference, the PWA manifest and the
+# service-worker registration are relative. The same `dist/` therefore runs
+# correctly at a domain root, in a repository sub-path
+# (https://<user>.github.io/<repo>/) and inside the Capacitor shell.
+#
+# Routing is hash-based, so there is no server-side rewrite to configure and a
+# deep link like #/daw survives a hard refresh.
+
+name: Deploy to GitHub Pages
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Build
+        run: npm run build
+
+      - name: Disable Jekyll processing
+        run: touch dist/.nojekyll
+
+      - uses: actions/configure-pages@v5
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: dist
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
