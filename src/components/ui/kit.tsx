@@ -16,6 +16,26 @@ import {
 import { Icon, type IconName } from '../../design/Icon';
 
 /* ══════════════════════════════════════════════════════════════════════════
+   SELECTION HYGIENE — shared by every double-click-to-reset control
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Drop a text selection the browser created around a control gesture (the two
+ * mousedowns of a double-click reset select the nearest word before the reset
+ * handler runs). Selections inside real text fields are left untouched.
+ */
+export function clearTextSelection(): void {
+  const sel = typeof window === 'undefined' ? null : window.getSelection();
+  if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
+  for (let i = 0; i < sel.rangeCount; i += 1) {
+    const node: Node = sel.getRangeAt(i).startContainer;
+    const el = node.nodeType === Node.ELEMENT_NODE ? (node as Element) : node.parentElement;
+    if (el?.closest('input, textarea, [contenteditable="true"]')) return;
+  }
+  sel.removeAllRanges();
+}
+
+/* ══════════════════════════════════════════════════════════════════════════
    PANEL
    ══════════════════════════════════════════════════════════════════════════ */
 

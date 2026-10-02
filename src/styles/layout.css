@@ -375,7 +375,13 @@
   .pagegrid__main,
   .pagegrid__side {
     overflow: visible;
-    min-height: 0;
+    /* `auto`, not `0`: in the one-column stack a zero minimum size lets Chrome
+       size each `auto` row to the container instead of to its content, so a tall
+       page paints out of its own row and lands on top of the next one (the pitch
+       dial used to cover the configuration switches). The automatic minimum size
+       keeps every row hugging its own column and `.pagegrid` does the scrolling.
+       `min-content` / `max-content` do not restore this - it must be `auto`. */
+    min-height: auto;
   }
   .pagegrid__main > *,
   .pagegrid__side > * {

@@ -85,6 +85,10 @@
   --sp-6: 28px;
   --sp-7: 38px;
 
+  /* Label → control gap. ONE value for every text-labelled switch: segmented
+     selector, rocker/toggle row, knob and fader. Never re-space these by hand. */
+  --gap-label-control: var(--sp-2);
+
   /* ── Type ─────────────────────────────────────────────────────────────── */
   --font-display: 'Chakra Petch', 'Rajdhani', 'DIN Alternate', system-ui, sans-serif;
   --font-ui: 'Barlow', 'Inter', system-ui, -apple-system, sans-serif;
@@ -148,6 +152,11 @@
   --fx-chroma: 0.5;
   --fx-bloom: 0.4;
   --fx-aero: 0.5;
+  /* Overscan for the animated grain layer. `fx-jitter` moves it by up to 3% of
+     its own box; a viewport-sized layer therefore vacates a bare (un-grained)
+     strip along the frame edge on every animation step. Keep this ≥ 2× the
+     jitter amplitude so the layer always covers the frame. */
+  --fx-grain-overscan: 6%;
 
   color-scheme: dark;
 }
@@ -171,4 +180,13 @@
     --t-slow: 1ms;
     --t-slab: 1ms;
   }
+}
+
+/* The in-app Motion switch writes :root[data-motion='reduced'] (state/settings.ts),
+   so mirror the OS preference for it - otherwise that control does nothing. */
+:root[data-motion='reduced'] {
+  --t-fast: 1ms;
+  --t-base: 1ms;
+  --t-slow: 1ms;
+  --t-slab: 1ms;
 }

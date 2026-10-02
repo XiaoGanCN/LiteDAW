@@ -69,7 +69,7 @@
 .rocker-inline {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--gap-label-control);
   height: 24px;
   padding: 0 10px;
   border-radius: var(--r-sm);
@@ -84,15 +84,11 @@
   transition:
     color var(--t-base) linear,
     border-color var(--t-base) linear,
-    border-radius var(--t-base) var(--ease-snap),
     box-shadow var(--t-base) var(--ease-out);
 }
 .rocker-inline:hover {
   color: var(--alu-100);
   border-color: var(--hair-3);
-}
-.rocker-inline:active {
-  border-radius: var(--r-pill);
 }
 .rocker-inline[data-on='true'] {
   color: var(--cyan-hi);

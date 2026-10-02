@@ -200,6 +200,13 @@ interface PitchStore {
   cfg: PitchConfig;
   question: Question | null;
   phase: 'idle' | 'playing' | 'answering' | 'revealed';
+  /**
+   * Epoch ms at which the current round entered `answering`, or 0 when no
+   * round is being answered. Kept in the store (not a page ref) because the
+   * store outlives page mounts — the elapsed timer must never be measured from
+   * an unset start, which reads as "since 1970".
+   */
+  answerStartedAt: number;
   attempts: Attempt[];
   stats: PitchStats;
   confusion: number[][];
@@ -234,6 +241,7 @@ export const usePitch = create<PitchStore>()(
       cfg: { ...DEFAULT_CONFIG },
       question: null,
       phase: 'idle',
+      answerStartedAt: 0,
       attempts: [],
       stats: emptyStats(),
       confusion: emptyMatrix(),
@@ -243,7 +251,13 @@ export const usePitch = create<PitchStore>()(
 
       setCfg: (key, value) => set((s) => ({ cfg: { ...s.cfg, [key]: value } })),
       resetConfig: () => set({ cfg: { ...DEFAULT_CONFIG } }),
-      setPhase: (phase) => set({ phase }),
+      /* Entering `answering` stamps the clock once; leaving it clears the stamp
+         so a stale start can never be read back by a later round. */
+      setPhase: (phase) =>
+        set((s) => ({
+          phase,
+          answerStartedAt: phase === 'answering' ? (s.phase === 'answering' ? s.answerStartedAt : Date.now()) : 0,
+        })),
       setQuestion: (question) => set({ question }),
 
       nextQuestion: () => {
@@ -306,7 +320,7 @@ export const usePitch = create<PitchStore>()(
             drillLabel,
             askedAt: Date.now(),
           };
-          set((s) => ({ question: q, previous: s.question, phase: 'playing', lastResult: null }));
+          set((s) => ({ question: q, previous: s.question, phase: 'playing', lastResult: null, answerStartedAt: 0 }));
           return q;
         }
 
@@ -346,7 +360,7 @@ export const usePitch = create<PitchStore>()(
           drilled: false,
           askedAt: Date.now(),
         };
-        set((s) => ({ question: q, previous: s.question, phase: 'playing', lastResult: null }));
+        set((s) => ({ question: q, previous: s.question, phase: 'playing', lastResult: null, answerStartedAt: 0 }));
         return q;
       },
 
@@ -409,6 +423,7 @@ export const usePitch = create<PitchStore>()(
             confusion,
             qualityConfusion,
             phase: 'revealed' as const,
+            answerStartedAt: 0,
             lastResult: { correct: a.correct, score: a.score },
           };
         }),
@@ -419,6 +434,7 @@ export const usePitch = create<PitchStore>()(
           stats: emptyStats(),
           question: null,
           phase: 'idle',
+          answerStartedAt: 0,
           lastResult: null,
           previous: null,
         }),

@@ -10,7 +10,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 3px;
+  /* dial ↔ label ↔ value: the shared label-to-control gap */
+  gap: var(--gap-label-control);
 }
 .knob__dial {
   touch-action: none;
@@ -54,7 +55,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 4px;
+  /* track ↔ label ↔ value: the shared label-to-control gap */
+  gap: var(--gap-label-control);
 }
 .fader__track {
   position: relative;
@@ -158,6 +160,8 @@
 
 .toggle-row {
   justify-content: space-between;
+  /* label ↔ rocker: same gap as every other labelled switch */
+  gap: var(--gap-label-control);
   padding: 6px 0;
   border-bottom: 1px dashed rgba(190, 210, 225, 0.07);
 }

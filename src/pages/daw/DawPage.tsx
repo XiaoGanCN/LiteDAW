@@ -451,19 +451,19 @@ export function DawPage() {
         </div>
 
         <div className="transport__cluster">
-          <span className="t-micro" style={{ padding: '0 5px' }}>
-            Snap
+          <span className="transport__pair">
+            <span className="t-micro">Snap</span>
+            <Segmented<SnapMode>
+              value={s.view.snap}
+              onChange={(v) => s.setView({ snap: v })}
+              options={[
+                { value: 'off', label: 'Off' },
+                { value: 'grid', label: 'Grid' },
+                { value: 'clips', label: 'Clip' },
+                { value: 'both', label: 'Both' },
+              ]}
+            />
           </span>
-          <Segmented<SnapMode>
-            value={s.view.snap}
-            onChange={(v) => s.setView({ snap: v })}
-            options={[
-              { value: 'off', label: 'Off' },
-              { value: 'grid', label: 'Grid' },
-              { value: 'clips', label: 'Clip' },
-              { value: 'both', label: 'Both' },
-            ]}
-          />
           <IconBtn
             icon={s.view.autoScroll ? 'eye' : 'eyeOff'}
             label={s.view.autoScroll ? 'Follow playhead: on' : 'Follow playhead: off'}
@@ -474,19 +474,19 @@ export function DawPage() {
         </div>
 
         <div className="transport__cluster hide-xl">
-          <span className="t-micro" style={{ padding: '0 5px' }}>
-            Tempo
+          <span className="transport__pair">
+            <span className="t-micro">Tempo</span>
+            <input
+              className="input"
+              style={{ width: 62, height: 26 }}
+              type="number"
+              min={20}
+              max={400}
+              value={s.bpm}
+              onChange={(e) => s.setProject({ bpm: Math.max(20, Math.min(400, Number(e.target.value) || 120)) })}
+              aria-label="Project tempo"
+            />
           </span>
-          <input
-            className="input"
-            style={{ width: 62, height: 26 }}
-            type="number"
-            min={20}
-            max={400}
-            value={s.bpm}
-            onChange={(e) => s.setProject({ bpm: Math.max(20, Math.min(400, Number(e.target.value) || 120)) })}
-            aria-label="Project tempo"
-          />
           <span className="t-micro">BPM</span>
         </div>
 
@@ -534,32 +534,33 @@ export function DawPage() {
 
       {/* ── Lower deck ────────────────────────────────────────────────── */}
       <div className="daw__deck">
-        <div className="deck__col">
-          <div className="row" style={{ gap: 6 }}>
-            <Segmented
-              value={deck}
-              onChange={setDeck}
-              options={[
-                { value: 'mixer', label: 'Mixer', icon: 'eq' },
-                { value: 'scopes', label: 'Instruments', icon: 'activity' },
-              ]}
+        <div className="row deck__bar" style={{ gap: 6 }}>
+          <Segmented
+            value={deck}
+            onChange={setDeck}
+            options={[
+              { value: 'mixer', label: 'Mixer', icon: 'eq' },
+              { value: 'scopes', label: 'Instruments', icon: 'activity' },
+            ]}
+          />
+          <span className="panel__spacer" />
+          <span className="transport__pair">
+            <span className="t-micro">Deck</span>
+            <input
+              className="range range--slim"
+              style={{ width: 110 }}
+              type="range"
+              min={220}
+              max={560}
+              step={10}
+              value={timelineH}
+              onChange={(e) => setTimelineH(Number(e.target.value))}
+              aria-label="Timeline height"
             />
-            <span className="panel__spacer" />
-            <span className="row" style={{ gap: 5 }}>
-              <span className="t-micro">Deck</span>
-              <input
-                className="range range--slim"
-                style={{ width: 110 }}
-                type="range"
-                min={220}
-                max={560}
-                step={10}
-                value={timelineH}
-                onChange={(e) => setTimelineH(Number(e.target.value))}
-                aria-label="Timeline height"
-              />
-            </span>
-          </div>
+          </span>
+        </div>
+
+        <div className="deck__col">
           {deck === 'mixer' ? <Mixer /> : <Scopes />}
           <div className="ticker">
             <span className="ticker__seg">

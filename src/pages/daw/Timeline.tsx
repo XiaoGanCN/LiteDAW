@@ -107,7 +107,11 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
   const contentH = layout.length ? layout[layout.length - 1].y + layout[layout.length - 1].h + 1 : 120;
 
   useEffect(() => {
-    const el = lanesRef.current?.parentElement;
+    /* Measure the lane column itself, NOT its `.tl__scroll` parent. The parent
+       includes the track-header column and the scrollbar, so using it made the
+       canvas backing store wider than its CSS width and every drawn x — grid,
+       clips, playhead — was scaled horizontally by ~0.83 at 1280px. */
+    const el = lanesRef.current;
     if (!el) return;
     const ro = new ResizeObserver(() => setW(el.clientWidth));
     ro.observe(el);
@@ -364,36 +368,40 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
     const cv = rulerRef.current;
     if (!cv) return;
     const dpr = Math.min(2, window.devicePixelRatio || 1);
-    cv.width = Math.max(1, Math.floor(w * dpr));
+    /* The backing store must match this canvas' own CSS width. The lane column
+       and the ruler column can differ by a scrollbar, so measuring `w` (lanes)
+       here would rescale the ruler against its ticks. */
+    const rw = cv.clientWidth || w;
+    cv.width = Math.max(1, Math.floor(rw * dpr));
     cv.height = Math.floor(RULER_H * dpr);
     const ctx = cv.getContext('2d');
     if (!ctx) return;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, w, RULER_H);
+    ctx.clearRect(0, 0, rw, RULER_H);
 
     /* overview strip */
     const total = Math.max(8, state.projectDuration() * 1.08, 8);
-    const ox = (t: number) => (t / total) * w;
+    const ox = (t: number) => (t / total) * rw;
     const og = ctx.createLinearGradient(0, 0, 0, OVERVIEW_H);
     og.addColorStop(0, 'rgba(24,32,40,0.95)');
     og.addColorStop(1, 'rgba(10,14,18,0.95)');
     ctx.fillStyle = og;
-    ctx.fillRect(0, 0, w, OVERVIEW_H);
+    ctx.fillRect(0, 0, rw, OVERVIEW_H);
     tracks.forEach((t) => {
       const list = clipsByTrack.get(t.id) ?? [];
       list.forEach((c) => {
         const x = ox(c.start);
-        const cw = Math.max(1, (c.duration / total) * w);
+        const cw = Math.max(1, (c.duration / total) * rw);
         ctx.fillStyle = hexA(c.color ?? t.color, 0.55);
         ctx.fillRect(x, 2, cw, OVERVIEW_H - 4);
       });
     });
     /* viewport window */
     const vx0 = ox(view.scroll);
-    const vx1 = ox(view.scroll + w / pxPerSec);
+    const vx1 = ox(view.scroll + rw / pxPerSec);
     ctx.fillStyle = 'rgba(0,0,0,0.45)';
     ctx.fillRect(0, 0, Math.max(0, vx0), OVERVIEW_H);
-    ctx.fillRect(vx1, 0, Math.max(0, w - vx1), OVERVIEW_H);
+    ctx.fillRect(vx1, 0, Math.max(0, rw - vx1), OVERVIEW_H);
     ctx.strokeStyle = 'rgba(31,208,230,0.75)';
     ctx.lineWidth = 1;
     ctx.strokeRect(vx0 + 0.5, 0.5, Math.max(2, vx1 - vx0) - 1, OVERVIEW_H - 1);
@@ -406,10 +414,10 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
     const stepSec = beatPx > 90 ? beat : beatPx > 26 ? beat * 2 : beatPx > 9 ? beat * 4 : beat * 16;
     const stepPx = stepSec * pxPerSec;
     const t0 = Math.floor(view.scroll / stepSec) * stepSec;
-    const t1 = view.scroll + w / pxPerSec;
+    const t1 = view.scroll + rw / pxPerSec;
 
     ctx.fillStyle = 'rgba(190,215,235,0.06)';
-    ctx.fillRect(0, 0, w, SCALE_H);
+    ctx.fillRect(0, 0, rw, SCALE_H);
     for (let t = t0; t <= t1; t += stepSec) {
       const x = Math.round(timeToX(t)) + 0.5;
       const barSec = beat * state.numerator;
@@ -853,11 +861,23 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
 
   /* ruler scrubbing */
   const rulerScrubbing = useRef(false);
-  const scrubFromEvent = (e: React.PointerEvent) => {
-    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    const t = Math.max(0, xToTime(e.clientX - rect.left));
+  /** Pointer x → project seconds, using the LANE column as the time origin.
+   *  The ruler canvas can start at a different x than `.tl__lanes` (the phone
+   *  breakpoints give the two columns different widths), so measuring the
+   *  event's own element would offset every scrub by that difference. */
+  const timeAtClientX = useCallback(
+    (clientX: number) => {
+      const rect = lanesRef.current?.getBoundingClientRect();
+      return Math.max(0, xToTime(clientX - (rect?.left ?? 0)));
+    },
+    [xToTime],
+  );
+  const scrubFromEvent = (e: React.PointerEvent, flush = false) => {
+    const t = timeAtClientX(e.clientX);
     const now = performance.now();
-    if (now - scrubLast.current > 55) {
+    /* Throttle only drives the audio grain; the transport position is committed
+       on every event, and `flush` guarantees the release position is not lost. */
+    if (flush || now - scrubLast.current > 55) {
       scrubLast.current = now;
       onScrub(t);
     }
@@ -950,10 +970,15 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
           onPointerDown={(e) => {
             (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
             rulerScrubbing.current = true;
-            scrubFromEvent(e);
+            scrubFromEvent(e, true);
           }}
-          onPointerMove={(e) => rulerScrubbing.current && scrubFromEvent(e)}
+          onPointerMove={(e) => {
+            if (rulerScrubbing.current) scrubFromEvent(e);
+          }}
           onPointerUp={(e) => {
+            /* Commit the exact release position, even if the throttle skipped
+               the last move — the playhead must land under the pointer. */
+            if (rulerScrubbing.current) scrubFromEvent(e, true);
             rulerScrubbing.current = false;
             (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
           }}
@@ -961,8 +986,7 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
             rulerScrubbing.current = false;
           }}
           onDoubleClick={(e) => {
-            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-            const t = Math.max(0, xToTime(e.clientX - rect.left));
+            const t = timeAtClientX(e.clientX);
             const store = useDaw.getState();
             if (!store.loopOn) {
               const barSec = (60 / store.bpm) * store.numerator;

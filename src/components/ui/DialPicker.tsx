@@ -57,10 +57,18 @@ export function DialPicker<T extends string | number>({
   const n = items.length;
 
   const r = size / 2;
-  const ringR = r - 30;
+  /**
+   * The outer label ring carries a 12px note name with an 8px caption below it,
+   * so the text needs ~15px of room past the label centre. Inset the whole ring
+   * by that much and the viewBox can never clip its own bottom detents (or the
+   * tick marks that sit outside the track).
+   */
+  const ringR = Math.max(20, r - 46);
   const tickOuter = ringR + 11;
   const tickInner = ringR - 8;
   const labelR = ringR + 22;
+  /** Angular width of one detent; every segment is centred on its own index. */
+  const step = n > 0 ? 360 / n : 360;
 
   /** index 0 sits at 12 o'clock, increasing clockwise. */
   const angleOf = useCallback((i: number) => (i / n) * 360 - 90, [n]);
@@ -115,10 +123,16 @@ export function DialPicker<T extends string | number>({
   /* ── Arc segments: one per detent, drawn as a thin annulus slice. ─────── */
   const gap = ring ? 0.9 : 3.2;
 
-  const arcPath = (startDeg: number, endDeg: number) => {
-    const a0 = ((startDeg - 90) * Math.PI) / 180;
-    const a1 = ((endDeg - 90) * Math.PI) / 180;
-    const large = endDeg - startDeg > 180 ? 1 : 0;
+  /**
+   * `fromDeg`/`toDeg` use the same frame as `angleOf` (degrees with 0 at
+   * 12 o'clock, increasing clockwise). Subtracting another quarter turn here
+   * used to rotate every segment three detents away from its own tick and from
+   * the head — the lit arc never matched the committed value.
+   */
+  const arcPath = (fromDeg: number, toDeg: number) => {
+    const a0 = (fromDeg * Math.PI) / 180;
+    const a1 = (toDeg * Math.PI) / 180;
+    const large = toDeg - fromDeg > 180 ? 1 : 0;
     const x0 = r + ringR * Math.cos(a0);
     const y0 = r + ringR * Math.sin(a0);
     const x1 = r + ringR * Math.cos(a1);
@@ -127,14 +141,21 @@ export function DialPicker<T extends string | number>({
   };
 
   return (
-    <div className="dial" style={{ width: size, opacity: disabled ? 0.45 : 1 }}>
+    <div className="dial" style={{ position: 'relative', width: size, maxWidth: '100%', opacity: disabled ? 0.45 : 1 }}>
       <svg
         ref={ref}
-        width={size}
-        height={size}
         viewBox={`0 0 ${size} ${size}`}
         className="dial__svg"
-        style={{ touchAction: 'none', cursor: disabled ? 'not-allowed' : 'grab' }}
+        style={{
+          width: '100%',
+          height: 'auto',
+          maxWidth: size,
+          /* The CSS drop-shadow / glow of the head must be able to paint past
+             the viewBox instead of being shaved by the SVG viewport. */
+          overflow: 'visible',
+          touchAction: 'none',
+          cursor: disabled ? 'not-allowed' : 'grab',
+        }}
         onPointerDown={(e) => {
           if (disabled) return;
           (e.currentTarget as SVGSVGElement).setPointerCapture(e.pointerId);
@@ -204,8 +225,10 @@ export function DialPicker<T extends string | number>({
         />
 
         {items.map((it, i) => {
-          const a0 = angleOf(i) + gap / 2;
-          const a1 = angleOf(i + 1) - gap / 2;
+          /* Segment i spans ± half a detent around the exact angle of item i,
+             the same angle the tick, the label, the head and `value` use. */
+          const a0 = angleOf(i) - step / 2 + gap / 2;
+          const a1 = angleOf(i) + step / 2 - gap / 2;
           const isSel = mode === 'multi' ? selectedSet.has(String(it.value)) : i === activeIdx;
           const isHot = hotIdx === i || dragIdx === i;
           const tickA = angleOf(i);
@@ -275,7 +298,7 @@ export function DialPicker<T extends string | number>({
         <circle cx={r} cy={r} r={ringR - 30} fill="rgba(0,0,0,.35)" stroke="rgba(255,255,255,.05)" />
       </svg>
 
-      <div className="dial__center" style={{ width: size, height: size }}>
+      <div className="dial__center" style={{ inset: 0 }}>
         <span className="dial__center-val">
           {mode === 'multi'
             ? values.length

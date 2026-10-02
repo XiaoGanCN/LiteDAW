@@ -22,7 +22,7 @@ export function ScopeStrip({ live, questionLabel }: { live: boolean; questionLab
   const [mode, setMode] = useState<ScopeMode>('wave');
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const tapRef = useRef<MeterTap | null>(null);
-  const boxRef = useRef<{ w: number; h: number }>({ w: 300, h: 68 });
+  const boxRef = useRef<{ w: number; h: number }>({ w: 300, h: 142 });
 
   const waveBuf = useMemo(() => new Float32Array(FFT), []);
   const freqBuf = useMemo(() => new Float32Array(BINS), []);
@@ -134,7 +134,7 @@ export function ScopeStrip({ live, questionLabel }: { live: boolean; questionLab
         </div>
         <div className="pt-scope__side">
           <span className="t-micro">Out</span>
-          <Meter getLevel={masterLevel} orientation="v" length={54} thickness={7} />
+          <Meter getLevel={masterLevel} orientation="v" length={72} thickness={7} />
           <span className="pt-scope__src marquee" title={questionLabel}>
             {questionLabel}
           </span>

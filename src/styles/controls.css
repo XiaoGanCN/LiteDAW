@@ -210,8 +210,9 @@
   box-shadow: var(--sh-inset-top), 0 2px 7px rgba(0, 0, 0, 0.55);
 }
 .btn:active:not(:disabled) {
+  /* Press may change colour / elevation / mechanical travel — never geometry:
+     the corner roundness must be identical to the released state. */
   transform: translateY(1px) scale(0.985);
-  border-radius: var(--r-pill); /* shape morph on press */
   box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.7);
   transition-duration: var(--t-fast);
 }
@@ -612,7 +613,7 @@
 .field {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: var(--gap-label-control);
   min-width: 0;
 }
 .field__label {

@@ -29,7 +29,10 @@ export const FxDefs = memo(function FxDefs() {
     <svg className="fx-probe" aria-hidden="true" focusable="false">
       <defs>
         {/* ── CRT / lens defect ─────────────────────────────────────────── */}
-        <filter id="litedaw-defect" x="-4%" y="-4%" width="108%" height="108%">
+        {/* Region is the SVG default -10%/120% (not -4%/108%): the chroma blur
+            is σ=2.6, so a tight region clips the glow and snaps a hard bright
+            edge around small filtered surfaces. */}
+        <filter id="litedaw-defect" x="-10%" y="-10%" width="120%" height="120%">
           <feTurbulence type="fractalNoise" baseFrequency="0.0009 0.0035" numOctaves="2" seed="7" result="warp" />
           <feDisplacementMap in="SourceGraphic" in2="warp" scale="1.6" xChannelSelector="R" yChannelSelector="G" result="disp" />
           <feColorMatrix

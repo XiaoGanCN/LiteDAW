@@ -23,6 +23,11 @@ import './pitch.css';
 
 const AUTO_MS = 3000;
 const AUTO_KEY = 'litedaw.pitch.auto';
+/**
+ * Longest plausible answer. A round can never be measured from epoch 0, and a
+ * round left open across a module switch is capped instead of reporting hours.
+ */
+const ANSWER_CAP_MS = 10 * 60 * 1000;
 const pcOf = (m: number) => ((m % 12) + 12) % 12;
 
 type StagePhase = 'idle' | 'listening' | 'answering' | 'revealed';
@@ -39,6 +44,7 @@ export function PitchPage() {
   const question = usePitch((s) => s.question);
   const previous = usePitch((s) => s.previous);
   const phase = usePitch((s) => s.phase);
+  const answerStartedAt = usePitch((s) => s.answerStartedAt);
   const lastResult = usePitch((s) => s.lastResult);
   const stats = usePitch((s) => s.stats);
   const attempts = usePitch((s) => s.attempts);
@@ -61,7 +67,6 @@ export function PitchPage() {
   const [running, setRunning] = useState(engine.running);
 
   const guessRef = useRef<number[]>([]);
-  const answerStart = useRef(0);
   const scheduler = useRef(new QuestionScheduler());
   const player = useRef<NotePlayer | null>(null);
   const preview = useRef<number | null>(null);
@@ -123,7 +128,6 @@ export function PitchPage() {
         const st = usePitch.getState();
         if (st.question?.id !== q.id || st.phase !== 'playing') return;
         st.setPhase('answering');
-        answerStart.current = Date.now();
         setNow(Date.now());
       },
     });
@@ -155,7 +159,6 @@ export function PitchPage() {
     const st = usePitch.getState();
     if (st.phase === 'playing') {
       st.setPhase('answering');
-      answerStart.current = Date.now();
       setNow(Date.now());
     }
   }, []);
@@ -172,7 +175,6 @@ export function PitchPage() {
     if (st.phase === 'answering') return true;
     if (st.phase !== 'playing') return false;
     st.setPhase('answering');
-    answerStart.current = Date.now();
     setNow(Date.now());
     return true;
   }, []);
@@ -195,7 +197,10 @@ export function PitchPage() {
     if (!beginAnswering()) return;
     const answer = guessRef.current;
     if (!answer.length) return;
-    const elapsed = Math.max(1, Date.now() - (answerStart.current || Date.now()));
+    /* Read the stamp back after `beginAnswering` — it lives in the store and is
+       stamped there, so this survives a module switch (a local ref would not). */
+    const started = usePitch.getState().answerStartedAt || Date.now();
+    const elapsed = Math.min(ANSWER_CAP_MS, Math.max(1, Date.now() - started));
     const g = gradeAnswer({ question: q, answerMidis: answer, ms: elapsed });
     const attempt: Attempt = {
       id: q.id,
@@ -342,7 +347,14 @@ export function PitchPage() {
 
   const stagePhase: StagePhase = play || phase === 'playing' ? 'listening' : phase;
 
-  const elapsed = phase === 'answering' ? Math.max(0, now - answerStart.current) : 0;
+  /**
+   * Elapsed answering time. The store outlives this page: switching modules
+   * remounts the component (every ref resets) while `phase` stays 'answering',
+   * so the start is read from the store and an unset start degrades to "now"
+   * rather than to epoch 0. Clamped to a sane round length.
+   */
+  const elapsed =
+    phase === 'answering' ? Math.min(ANSWER_CAP_MS, Math.max(0, now - (answerStartedAt || now))) : 0;
 
   const targetPcs = useMemo(() => new Set((question?.midis ?? []).map(pcOf)), [question]);
   const guessPcs = useMemo(() => new Set(guess.map(pcOf)), [guess]);

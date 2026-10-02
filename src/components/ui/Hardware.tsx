@@ -4,6 +4,7 @@
    ========================================================================= */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { clearTextSelection } from './kit';
 
 /* ══════════════════════════════════════════════════════════════════════════
    KNOB — 270° rotary with pointer-drag, fine mode and snap-back
@@ -112,7 +113,12 @@ export function Knob({
         onPointerMove={onPointerMove}
         onPointerUp={end}
         onPointerCancel={end}
-        onDoubleClick={() => resetTo !== undefined && onChange(resetTo)}
+        onDoubleClick={() => {
+          if (resetTo === undefined) return;
+          /* The double-click may have selected the nearest label text. */
+          clearTextSelection();
+          onChange(resetTo);
+        }}
         role="slider"
         aria-label={label ?? 'knob'}
         aria-valuemin={min}
@@ -256,7 +262,11 @@ export function Fader({
         onPointerMove={(e) => live && setFromEvent(e.clientY)}
         onPointerUp={() => setLive(false)}
         onPointerCancel={() => setLive(false)}
-        onDoubleClick={() => onChange(clamp(resetTo))}
+        onDoubleClick={() => {
+          /* The double-click may have selected the nearest label text. */
+          clearTextSelection();
+          onChange(clamp(resetTo));
+        }}
         role="slider"
         aria-label={label ?? 'fader'}
         aria-valuemin={min}
@@ -274,9 +284,14 @@ export function Fader({
         <span
           className="fader__fill"
           style={{
-            top: bipolar ? `${top + capH / 2}px` : undefined,
-            bottom: bipolar ? undefined : `${travel - top}px`,
-            height: bipolar ? `${Math.abs(pct - zeroPct) * travel}px` : `${travel - top}px`,
+            /* The fill is anchored by its own top edge in both modes: bipolar
+               grows outward from the zero detent, unipolar from the bottom of
+               the travel (min) up to the underside of the cap. Anchoring the
+               unipolar fill with `bottom: travel - top` reused the cap-to-floor
+               distance as a floor offset, which mirrored the lit travel above
+               the handle instead of below it. */
+            top: `${bipolar ? top + capH / 2 : top + capH}px`,
+            height: `${bipolar ? Math.abs(pct - zeroPct) * travel : travel - top}px`,
             background: `linear-gradient(180deg, ${accent}, color-mix(in srgb, ${accent} 45%, black))`,
             boxShadow: `0 0 8px ${accent}`,
           }}

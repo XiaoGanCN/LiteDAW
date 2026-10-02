@@ -355,23 +355,50 @@
 
 .daw__deck {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 320px;
+  /* Shared toolbar row, then the mixer and the inspector columns. Both columns
+     start on the same row, so the inspector's top edge lands exactly on the
+     mixer panel's top edge instead of one toolbar row higher. */
+  grid-template-columns: minmax(0, 1fr) var(--inspector-w, 320px);
+  grid-template-rows: auto minmax(0, 1fr);
   gap: var(--sp-2);
   padding: var(--sp-2) var(--sp-3) var(--sp-3);
   min-height: 0;
-  overflow: hidden;
+  /* The deck is the single scroller: two independently scrolling columns put
+     two scrollbars side by side in the same region. */
+  overflow: auto;
+}
+
+/* Deck toolbar spans both columns. */
+.deck__bar {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 .deck__col {
+  grid-row: 2;
   display: flex;
   flex-direction: column;
   gap: var(--sp-2);
+  min-width: 0;
   min-height: 0;
-  overflow: auto;
+  overflow: visible;
 }
 /* Panels own their height; they must never be shrunk by a flex/grid deficit. */
 .deck__col > .panel {
   flex: 0 0 auto;
+}
+
+/* A text label sitting directly beside a switch, segmented control or number
+   field uses the shared label→control rhythm, not a one-off inline gap. */
+.transport__pair {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gap-label-control);
+  min-width: 0;
 }
 
 .mixer {
@@ -675,7 +702,11 @@
     flex: 0 0 auto;
     height: 42vh;
     min-height: 210px;
-    grid-template-columns: 148px minmax(0, 1fr);
+    /* Drive both the ruler column and `.tl__scroll`'s header column from the
+       same variable — overriding only the grid columns left the ruler at 148px
+       while the lanes still started at 208px, so the ruler, clips and playhead
+       disagreed by 60px. */
+    --head-w: 148px;
   }
   .daw__deck {
     display: flex;

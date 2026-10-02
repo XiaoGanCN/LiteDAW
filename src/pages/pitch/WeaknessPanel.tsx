@@ -85,20 +85,24 @@ export function WeaknessPanel({ onDrill }: { onDrill: (pair: [number, number]) =
       }
     >
       {/* ── Session flight recorder ────────────────────────────────────── */}
-      <div className="pt-stats">
-        <Stat label="Attempts" value={String(stats.total)} tone="plain" />
-        <Stat label="Accuracy" value={pct(accuracy)} tone={accuracy >= 0.8 ? 'green' : accuracy >= 0.5 ? 'amber' : 'red'} />
-        <Stat label="Mean latency" value={ms(meanMs)} tone="cyan" />
-        <Stat label="Streak" value={`${stats.streak}`} tone={stats.streak > 0 ? 'green' : 'plain'} />
-        <Stat label="Best" value={`${stats.bestStreak}`} tone="plain" />
-        <Stat label="Score" value={stats.score.toFixed(1)} tone="amber" />
+      <div className="pt-wm__dash">
+        <div className="pt-wm__meters">
+          <div className="pt-stats">
+            <Stat label="Attempts" value={String(stats.total)} tone="plain" />
+            <Stat label="Accuracy" value={pct(accuracy)} tone={accuracy >= 0.8 ? 'green' : accuracy >= 0.5 ? 'amber' : 'red'} />
+            <Stat label="Mean latency" value={ms(meanMs)} tone="cyan" />
+            <Stat label="Streak" value={`${stats.streak}`} tone={stats.streak > 0 ? 'green' : 'plain'} />
+            <Stat label="Best" value={`${stats.bestStreak}`} tone="plain" />
+            <Stat label="Score" value={stats.score.toFixed(1)} tone="amber" />
+          </div>
+          <div className="pt-scorerow">
+            <span className="t-micro">Credit gain</span>
+            <Bar value={scoreRate} max={1} length="100%" thickness={7} color="var(--amber)" />
+            <span className="pt-mono">{pct(scoreRate)}</span>
+          </div>
+        </div>
+        <Sparkline attempts={attempts} />
       </div>
-      <div className="pt-scorerow">
-        <span className="t-micro">Credit gain</span>
-        <Bar value={scoreRate} max={1} length="100%" thickness={7} color="var(--amber)" />
-        <span className="pt-mono">{pct(scoreRate)}</span>
-      </div>
-      <Sparkline attempts={attempts} />
 
       <Divider />
 
@@ -166,13 +170,14 @@ export function WeaknessPanel({ onDrill }: { onDrill: (pair: [number, number]) =
               </div>
             ))}
           </div>
-
-          <div className="pt-breaks">
-            <BreakList title="By instrument" rows={instrRows} />
-            <BreakList title="By octave" rows={octRows} />
-            <BreakList title="By chord quality" rows={qualRows} />
-          </div>
         </section>
+      </div>
+
+      {/* Breakdowns read better side by side across the full width. */}
+      <div className="pt-breaks">
+        <BreakList title="By instrument" rows={instrRows} />
+        <BreakList title="By octave" rows={octRows} />
+        <BreakList title="By chord quality" rows={qualRows} />
       </div>
 
       <Divider />

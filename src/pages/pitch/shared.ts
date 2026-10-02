@@ -134,7 +134,12 @@ export function accInk(a: number | null): string {
 
 export const pct = (v: number, digits = 0) => `${(v * 100).toFixed(digits)}%`;
 
-export const ms = (v: number) => (v >= 10000 ? `${(v / 1000).toFixed(1)}s` : `${Math.round(v)}ms`);
+/** Latency readout. Guards non-finite/negative input so a bad stamp can never
+ *  print a value derived from epoch 0 (e.g. `1790929331.8s`). */
+export const ms = (v: number) => {
+  const t = Number.isFinite(v) ? Math.max(0, v) : 0;
+  return t >= 10000 ? `${(t / 1000).toFixed(1)}s` : `${Math.round(t)}ms`;
+};
 
 export const hz = (midi: number) => {
   const f = 440 * Math.pow(2, (midi - 69) / 12);

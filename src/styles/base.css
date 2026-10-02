@@ -71,6 +71,34 @@ ol {
   color: #fff;
 }
 
+/* ── Selection hygiene ───────────────────────────────────────────────────
+   Instrument chrome is clicked, dragged and double-clicked (double-click
+   resets a knob/fader). None of that may leave a text selection behind, so
+   the chrome opts out here — one rule for the whole surface. Genuinely
+   editable text opts back in below. */
+.seg,
+.rocker,
+.tab,
+.chip,
+.legend,
+.menu-item,
+.numdrag,
+.knob,
+.fader,
+.piano,
+.wheel,
+.dial {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+input,
+textarea,
+[contenteditable='true'] {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
 :focus-visible {
   outline: 2px solid var(--cyan);
   outline-offset: 2px;
@@ -258,12 +286,16 @@ ol {
   inset: 0;
   z-index: 900;
   pointer-events: none;
+  /* Explicit clip (contain already paints this): the oversized grain layer is
+     trimmed exactly at the frame edge instead of bleeding past it. */
+  overflow: hidden;
   contain: strict;
 }
 
 .fx-stack > * {
   position: absolute;
   inset: 0;
+  pointer-events: none;
 }
 
 /* Interlaced scanlines. */
@@ -294,16 +326,26 @@ ol {
   will-change: transform;
 }
 @keyframes fx-roll {
+  /* Both ends sit fully outside the frame: -100% puts the bar's bottom edge on
+     the top frame edge, 400% puts its top edge below the bottom frame edge. The
+     old -30% start left the bright 50% stop already inside the viewport, so
+     every 9.5 s loop popped a glow band into the top of the frame. */
   from {
-    transform: translate3d(0, -30%, 0);
+    transform: translate3d(0, -100%, 0);
   }
   to {
     transform: translate3d(0, 400%, 0);
   }
 }
 
-/* Sensor grain — static SVG turbulence tile, jittered by transform steps. */
+/* Sensor grain — static SVG turbulence tile, jittered by transform steps.
+   Deliberately OVERSIZED by `--fx-grain-overscan`: the jitter translates the
+   layer by up to 3% of its own box, so a viewport-sized layer uncovers a clean
+   strip along the frame edge on every step (a bright flicker at 6.7 Hz). With
+   the overscan the frame stays covered at every step; `.fx-stack`'s paint
+   containment clips the excess. */
 .fx-noise {
+  inset: calc(-1 * var(--fx-grain-overscan));
   opacity: var(--fx-noise);
   mix-blend-mode: overlay;
   background-image: var(--fx-noise-tile);
@@ -446,4 +488,11 @@ ol {
   clip: rect(0 0 0 0);
   white-space: nowrap;
   border: 0;
+}
+
+/* Reduced motion: the two decorative FX loops run on literal durations, so the
+   --t-* collapse above cannot reach them and they have to be stopped explicitly. */
+:root[data-motion='reduced'] .fx-roll,
+:root[data-motion='reduced'] .fx-noise {
+  animation: none;
 }
