@@ -423,6 +423,18 @@ asserts there is no horizontal document overflow. Screenshots land in
 | Studio: add track → play → import a WAV → select the clip → all four inspector tabs → scopes → settings | Timeline canvas, decode pipeline, clip model, EQ curve, scopes, export bay |
 | Mobile pass at 390×844 | Responsive shell, bottom navigation rail, no clipped instruments |
 
+The deployed build can be checked the same way, which is what proves the
+sub-path hosting story:
+
+```bash
+npm run check:deployed                                  # the GitHub Pages build
+npm run check:deployed -- https://example.com/litedaw/  # any other origin
+```
+
+It loads every route from the live origin and asserts that the self-hosted
+fonts resolve, the service worker registers with the correct scope, and no
+request fails.
+
 ---
 
 ## 9. Privacy
