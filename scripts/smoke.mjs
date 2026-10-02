@@ -112,6 +112,7 @@ async function main() {
   // Piano-keyboard answer entry, then the radial dial variant.
   await pressPrimary(page); // next question
   await page.waitForTimeout(900);
+  if (!(await useKeyboardSurface(page))) notes.push('pitch: no Keyboard/Dial surface switch found');
   const key = page.locator('.pkey').nth(12);
   if (await key.count()) {
     await key.click({ force: true });
@@ -260,8 +261,10 @@ async function main() {
   await mobile.waitForTimeout(700);
   await pressPrimary(mobile);
   await mobile.waitForTimeout(1200);
+  await useKeyboardSurface(mobile);
   const mKey = mobile.locator('.pkey').nth(8);
   if (await mKey.count()) await mKey.click({ force: true });
+  else notes.push('mobile pitch: no .pkey to press — answer surface is not the keyboard');
   await mobile.waitForTimeout(600);
   if (await page.evaluate(() => true)) {
     await mobile.screenshot({ path: path.join(SHOTS, '18-mobile-pitch-answering.png') });
@@ -336,6 +339,23 @@ async function pressPrimary(page) {
     notes.push(`primary click failed: ${e.message}`);
     return false;
   }
+}
+
+/**
+ * Selects the pitch trainer's answer surface explicitly. The choice is persisted
+ * in the store, so a pass that leaves it on Dial would silently turn every later
+ * `.pkey` click into a no-op — the original cause of this suite's flaky
+ * "mobile pitch SUBMIT never armed" note.
+ */
+async function useKeyboardSurface(page) {
+  const opt = page.locator('.seg__opt', { hasText: /^\s*keyboard\s*$/i }).first();
+  if ((await opt.count()) === 0) return false;
+  const on = await opt.getAttribute('data-on');
+  if (on !== 'true') {
+    await opt.click();
+    await page.waitForTimeout(350);
+  }
+  return true;
 }
 
 async function clickByText(page, selector, re, optional = false) {
