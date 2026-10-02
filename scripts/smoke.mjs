@@ -251,6 +251,48 @@ async function main() {
   await mobile.goto(`${base}#/pitch`, { waitUntil: 'load' });
   await mobile.waitForTimeout(900);
   await shot(mobile, '16-mobile-pitch', true);
+  await mobile.goto(`${base}#/bpm`, { waitUntil: 'load' });
+  await mobile.waitForTimeout(900);
+  await shot(mobile, '17-mobile-bpm', true);
+  // Run a real drill on the phone so the answer surface is exercised at 390px.
+  await mobile.goto(`${base}#/pitch`, { waitUntil: 'load' });
+  await mobile.waitForSelector('.pt', { timeout: 20000 });
+  await mobile.waitForTimeout(700);
+  await pressPrimary(mobile);
+  await mobile.waitForTimeout(1200);
+  const mKey = mobile.locator('.pkey').nth(8);
+  if (await mKey.count()) await mKey.click({ force: true });
+  await mobile.waitForTimeout(600);
+  if (await page.evaluate(() => true)) {
+    await mobile.screenshot({ path: path.join(SHOTS, '18-mobile-pitch-answering.png') });
+  }
+  const mArmed = await mobile
+    .waitForFunction(
+      () => {
+        const b = [...document.querySelectorAll('.btn--primary')].find((x) => /submit/i.test(x.textContent || ''));
+        return !!b && !b.disabled;
+      },
+      null,
+      { timeout: 10000 },
+    )
+    .then(() => true)
+    .catch(() => false);
+  if (mArmed) {
+    await mobile.locator('.btn--primary', { hasText: /submit/i }).first().click();
+    await mobile.waitForTimeout(900);
+    await mobile.screenshot({ path: path.join(SHOTS, '19-mobile-pitch-revealed.png') });
+  } else {
+    notes.push('mobile pitch SUBMIT never armed');
+  }
+  // Confirm nothing overflows the phone viewport horizontally.
+  const overflow = await mobile.evaluate(() => ({
+    doc: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+    wide: [...document.querySelectorAll('body *')]
+      .filter((el) => el.getBoundingClientRect().right > window.innerWidth + 2)
+      .slice(0, 6)
+      .map((el) => `${el.tagName}.${String(el.className).split(' ')[0]}@${Math.round(el.getBoundingClientRect().right)}`),
+  }));
+  notes.push(`mobile overflow: doc=${overflow.doc}px ${overflow.wide.length ? 'offenders=' + overflow.wide.join(', ') : '(none)'}`);
 
   await browser.close();
   server.close();

@@ -1055,6 +1055,18 @@
    RESPONSIVE
    ══════════════════════════════════════════════════════════════════════════ */
 
+@media (max-width: 900px), (orientation: portrait) and (max-width: 1024px) {
+  /* On a phone the page scrolls as one column, so every section inside the
+     instrument keeps its natural height instead of being squeezed into the
+     first screenful. */
+  .pt-shell > * {
+    flex: 0 0 auto;
+  }
+  .pt-surface {
+    min-height: 0;
+  }
+}
+
 @media (max-width: 700px) {
   .pt-shell {
     padding: var(--sp-2);

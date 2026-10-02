@@ -1185,3 +1185,12 @@
     transition-duration: 1ms;
   }
 }
+
+
+@media (max-width: 900px), (orientation: portrait) and (max-width: 1024px) {
+  .bpm-stage,
+  .bpm-page .panel,
+  .bpm-page .panel > * {
+    flex: 0 0 auto;
+  }
+}

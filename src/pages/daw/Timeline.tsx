@@ -78,6 +78,10 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
   }>({ clips: null, tracks: null, selection: null, viewKey: '' });
   const dragRef = useRef<DragState | null>(null);
   const rafRef = useRef(0);
+  /** Live pointers, so a second touch upgrades the gesture to pinch-zoom. */
+  const pointers = useRef(new Map<number, { x: number; y: number }>());
+  const pinch = useRef<{ dist: number; pxPerSec: number; anchor: number; mid: number } | null>(null);
+  const longPress = useRef<{ timer: number; x: number; y: number } | null>(null);
   const [w, setW] = useState(900);
   const [hover, setHover] = useState<{ clipId: string | null; edge: DragKind; trackIndex: number }>({
     clipId: null,
@@ -577,11 +581,64 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
     return { x: e.clientX - rect.left, y: e.clientY - rect.top };
   };
 
+  const cancelLongPress = () => {
+    if (longPress.current) {
+      window.clearTimeout(longPress.current.timer);
+      longPress.current = null;
+    }
+  };
+
+  /** Opens the context menu at a touch point (there is no right-click there). */
+  const openMenuAt = (clientX: number, clientY: number) => {
+    const rect = lanesRef.current?.getBoundingClientRect();
+    if (!rect) return;
+    const x = clientX - rect.left;
+    const y = clientY - rect.top;
+    const hit = hitTest(x, y);
+    const lane = hit?.lane ?? trackAtY(y) ?? layout[0];
+    if (!lane) return;
+    if (hit && !useDaw.getState().selection.includes(hit.clip.id)) useDaw.getState().select([hit.clip.id]);
+    setMenu({ x: clientX, y: clientY, clipId: hit?.clip.id ?? null, time: xToTime(x), trackId: lane.track.id });
+  };
+
   const onPointerDown = (e: React.PointerEvent) => {
     if (e.button === 2) return;
     setMenu(null);
     const { x, y } = localPoint(e);
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+
+    pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+    if (pointers.current.size === 2) {
+      /* Two fingers: abandon any single-pointer edit and enter pinch mode. */
+      const [a, b] = [...pointers.current.values()];
+      const store = useDaw.getState();
+      const mid = (a.x + b.x) / 2;
+      const rect = lanesRef.current!.getBoundingClientRect();
+      pinch.current = {
+        dist: Math.max(24, Math.hypot(a.x - b.x, a.y - b.y)),
+        pxPerSec: store.view.pxPerSec,
+        anchor: store.view.scroll + (mid - rect.left) / store.view.pxPerSec,
+        mid,
+      };
+      dragRef.current = null;
+      setMarquee(null);
+      cancelLongPress();
+      return;
+    }
+
+    /* Long-press opens the context menu — the touch equivalent of right-click. */
+    if (e.pointerType !== 'mouse') {
+      cancelLongPress();
+      longPress.current = {
+        x: e.clientX,
+        y: e.clientY,
+        timer: window.setTimeout(() => {
+          longPress.current = null;
+          dragRef.current = null;
+          openMenuAt(e.clientX, e.clientY);
+        }, 520),
+      };
+    }
     const hit = hitTest(x, y);
     const additive = e.shiftKey || e.metaKey || e.ctrlKey;
 
@@ -652,6 +709,27 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
 
   const onPointerMove = (e: React.PointerEvent) => {
     const { x, y } = localPoint(e);
+    if (pointers.current.has(e.pointerId)) pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+
+    /* Pinch: scale the zoom about the gesture midpoint and pan with it. */
+    const p = pinch.current;
+    if (p && pointers.current.size >= 2) {
+      const [a, b] = [...pointers.current.values()];
+      const dist = Math.max(24, Math.hypot(a.x - b.x, a.y - b.y));
+      const rect = lanesRef.current!.getBoundingClientRect();
+      const mid = (a.x + b.x) / 2;
+      const next = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, p.pxPerSec * (dist / p.dist)));
+      const store = useDaw.getState();
+      store.setView({
+        pxPerSec: next,
+        scroll: Math.max(0, p.anchor - (mid - rect.left) / next - (p.mid - mid) / next),
+      });
+      return;
+    }
+
+    if (longPress.current && (Math.abs(e.clientX - longPress.current.x) > 8 || Math.abs(e.clientY - longPress.current.y) > 8)) {
+      cancelLongPress();
+    }
     const d = dragRef.current;
     if (!d) {
       const hit = hitTest(x, y);
@@ -744,6 +822,9 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
   };
 
   const onPointerUp = (e: React.PointerEvent) => {
+    pointers.current.delete(e.pointerId);
+    if (pointers.current.size < 2) pinch.current = null;
+    cancelLongPress();
     const d = dragRef.current;
     if (d?.kind === 'marquee' && marquee) {
       const x0 = Math.min(marquee.x0, marquee.x1);
@@ -762,7 +843,12 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
     }
     dragRef.current = null;
     setMarquee(null);
-    (e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId);
+    if (pointers.current.size === 0) pinch.current = null;
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {
+      /* pointer already released */
+    }
   };
 
   /* ruler scrubbing */
@@ -913,14 +999,7 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
           onPointerCancel={onPointerUp}
           onContextMenu={(e) => {
             e.preventDefault();
-            const rect = lanesRef.current!.getBoundingClientRect();
-            const x = e.clientX - rect.left;
-            const y = e.clientY - rect.top;
-            const hit = hitTest(x, y);
-            const lane = hit?.lane ?? trackAtY(y) ?? layout[0];
-            if (!lane) return;
-            if (hit && !selection.includes(hit.clip.id)) useDaw.getState().select([hit.clip.id]);
-            setMenu({ x: e.clientX, y: e.clientY, clipId: hit?.clip.id ?? null, time: xToTime(x), trackId: lane.track.id });
+            openMenuAt(e.clientX, e.clientY);
           }}
           onDragOver={(e) => {
             e.preventDefault();
@@ -929,7 +1008,7 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
           }}
           onDragLeave={() => setDropping(false)}
           onDrop={onDrop}
-          style={{ minHeight: contentH }}
+          style={{ minHeight: contentH, touchAction: 'pan-y' }}
         >
           <canvas ref={laneCanvasRef} className="tl__canvas" style={{ cursor: hover.clipId ? 'grab' : 'default' }} />
           {emptyProject && (

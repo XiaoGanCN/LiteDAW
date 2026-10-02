@@ -72,7 +72,55 @@ Serve `dist/` over HTTPS (or `localhost`), open it in Chrome for Android, then
 **⋮ → Add to Home screen**. It launches standalone, works offline (Workbox
 precache), and requests microphone access for recording.
 
-### 3b. Standalone APK / AAB with Capacitor
+### 3b. Host it on GitHub Pages
+
+**Yes — this works out of the box, including at a repository sub-path.**
+There is no base-path configuration to add and no server to configure:
+
+- `vite.config.ts` sets `base: './'`, so every emitted script, stylesheet,
+  font, icon and the PWA manifest are referenced **relatively**. The same
+  `dist/` therefore loads correctly from `https://user.github.io/repo/`, from a
+  domain root, and from Capacitor's `https://localhost` shell.
+- Routing is **hash-based** (`#/pitch`, `#/bpm`, `#/daw`), so GitHub Pages
+  never has to rewrite an unknown path back to `index.html`. A deep link in a
+  bookmark or a hard refresh on `#/daw` just works.
+- The type stack is self-hosted under `public/fonts/`, so there is no
+  cross-origin request to Google Fonts to break or slow down.
+- The service worker registers with `./sw.js` and `scope: './'`, which resolves
+  correctly inside a sub-path.
+
+A workflow is already committed at
+[`.github/workflows/deploy-pages.yml`](.github/workflows/deploy-pages.yml).
+It typechecks, builds, adds `dist/.nojekyll` (so the `_`-prefixed Rollup chunks
+are served), and publishes the artifact.
+
+One-time setup in the repository:
+
+1. **Settings → Pages → Build and deployment → Source: GitHub Actions.**
+   (Already enabled through the API for `XiaoGanCN/LiteDAW`.)
+2. Push to `main`. The workflow runs and publishes to
+   **https://xiaogancn.github.io/LiteDAW/**.
+
+To run it yourself instead of via Actions:
+
+```bash
+npm run build
+npx vite preview --base ./ --port 5273   # sanity check the exact bundle
+# then publish dist/ to any static host: Pages, Netlify, S3, nginx, …
+```
+
+If you would rather deploy to a *project* path with an absolute base (for
+example to keep `import.meta.env.BASE_URL` meaningful), pass it explicitly:
+
+```bash
+npx vite build --base /LiteDAW/
+```
+
+Note that a service worker plus a CDN can serve a stale build after a deploy.
+The app uses `registerType: 'autoUpdate'`, so a new worker installs on the next
+visit and the following load picks it up.
+
+### 3c. Standalone APK / AAB with Capacitor
 
 Prerequisites: **JDK 17+**, **Android Studio** (or the command-line SDK with
 `ANDROID_HOME` set), and `adb` for device installs.
@@ -351,7 +399,33 @@ scripts/                   font vendoring, icon generation
 
 ---
 
-## 8. Privacy
+## 8. Verification
+
+Three gates, all wired to npm scripts:
+
+```bash
+npm run typecheck   # tsc --noEmit, strict + noUnusedLocals/Parameters — clean
+npm run build       # vite production build
+npm run smoke       # headless Chrome pass over all three modules
+```
+
+`npm run smoke` boots the real production bundle in the locally installed
+Google Chrome (no browser download), walks every route, drives each module
+through its actual flow, and fails on any console error, page exception or
+failed request. It also re-runs the two trainers at a 390 px phone viewport and
+asserts there is no horizontal document overflow. Screenshots land in
+`.smoke/` for visual review. Coverage:
+
+| Step | What it proves |
+| --- | --- |
+| Pitch: play → answer on the keyboard → grade → dial input → grade | Question generation, both answer surfaces, grading, reveal |
+| Tempo: start → reference plays → drum the wheel → lock in → debrief | Metronome scheduling, wheel picker, timer, beat visualiser, verdict |
+| Studio: add track → play → import a WAV → select the clip → all four inspector tabs → scopes → settings | Timeline canvas, decode pipeline, clip model, EQ curve, scopes, export bay |
+| Mobile pass at 390×844 | Responsive shell, bottom navigation rail, no clipped instruments |
+
+---
+
+## 9. Privacy
 
 Everything runs locally. Audio never leaves the device, nothing is uploaded, and
 there are no analytics or network calls at runtime.

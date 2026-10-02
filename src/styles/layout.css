@@ -356,19 +356,52 @@
     display: none;
   }
 
+  /* Single scrolling column. The rows must be *content* sized
+     (`grid-template-rows: none` + `grid-auto-rows: auto`): a `1fr` row next to
+     an `auto` row resolves to 0 once the sibling's content fills the viewport,
+     which silently collapses the instrument to zero height. */
   .pagegrid {
-    grid-template-columns: 1fr;
-    grid-template-rows: minmax(0, 1fr) auto;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: none;
+    grid-auto-rows: auto;
+    align-content: start;
     padding: var(--sp-2);
     gap: var(--sp-2);
-    overflow: auto;
+    overflow-y: auto;
+    overflow-x: hidden;
+    overscroll-behavior: contain;
+    -webkit-overflow-scrolling: touch;
   }
   .pagegrid__main,
   .pagegrid__side {
     overflow: visible;
+    min-height: 0;
+  }
+  .pagegrid__main > *,
+  .pagegrid__side > * {
+    /* Children keep their natural height instead of being squeezed. */
+    flex: 0 0 auto;
   }
   .pagegrid__side {
     padding-bottom: var(--sp-3);
+  }
+
+  /* Panel headers reflow instead of clipping their action controls. */
+  .panel__head {
+    flex-wrap: wrap;
+    row-gap: 4px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+  }
+
+  /* The telemetry strip becomes horizontally scrollable so no readout is
+     silently truncated on a narrow screen. */
+  .ticker {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .ticker::-webkit-scrollbar {
+    display: none;
   }
 }
 
