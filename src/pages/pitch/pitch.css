@@ -10,6 +10,53 @@
   --pt-cell: clamp(15px, 1.55vw, 24px);
 }
 
+/* The module is a column: the two page columns scroll, the status line does
+   not. `.ticker` used to be the last child of `.pagegrid__main`, which put it
+   between the instrument and the configuration rack once the shell stacked
+   everything into one column — stranded mid-page instead of attached to the
+   instrument. As a module footer it holds the bottom edge in both layouts. */
+.pt-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.pt-page > .pagegrid {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+}
+.pt-page > .pt-ticker {
+  flex: 0 0 auto;
+  margin: 0 var(--sp-3) var(--sp-3);
+}
+
+/* ── Status line priority tiers ────────────────────────────────────────── */
+/* 0 audio lamp · 1 question · 2 accuracy/score · 3 attempts · 4 diagnostics.
+   Tiers are dropped from the least important end so the strip never needs a
+   horizontal scroll on a phone. `.hide-xs` (layout.css) additionally hides the
+   diagnostic segments below 560px. */
+@media (max-width: 700px) {
+  .pt-ticker [data-pri='5'] {
+    display: none;
+  }
+}
+@media (max-width: 620px) {
+  .pt-ticker [data-pri='4'] {
+    display: none;
+  }
+}
+@media (max-width: 500px) {
+  .pt-ticker [data-pri='3'] {
+    display: none;
+  }
+}
+@media (max-width: 430px) {
+  .pt-ticker [data-pri='2'] {
+    display: none;
+  }
+}
+
 .pt-mono {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
@@ -246,6 +293,18 @@
 }
 .pt-dialwrap .dial__svg {
   overflow: visible;
+}
+/* The dial is a real control: it takes focus and shows where it is. An `outline`
+   on an SVG root is always rectangular, so the ring is drawn on the round
+   wrapper; the glow is the fallback for engines without `:has()`. */
+.pt-dialwrap .dial__svg:focus-visible {
+  outline: none;
+  filter: drop-shadow(0 10px 26px rgba(0, 0, 0, 0.6)) drop-shadow(0 0 9px var(--cyan-hi));
+}
+.pt-dialwrap .dial:has(.dial__svg:focus-visible) {
+  outline: 2px solid var(--cyan-hi);
+  outline-offset: 2px;
+  border-radius: 50%;
 }
 .pt-dialwrap[data-phase='listening'] .dial__svg {
   filter: drop-shadow(0 10px 26px rgba(0, 0, 0, 0.6)) drop-shadow(0 0 18px rgba(31, 208, 230, 0.25));
@@ -578,25 +637,42 @@
   min-width: 0;
 }
 
+/* Session readouts. Caption over value — the same anatomy as `.field` — so a
+   cell only needs room for the longer of the two and can never clip its label
+   ("Mean latency" was truncating to "MEA…" while the value escaped the panel).
+   The grid reflows instead of overflowing: the track minimum is small enough
+   for six cells, every item may shrink, and below 900px the row becomes a 3×2
+   block for the stacked one-column layout. */
 .pt-stats {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(92px, 1fr));
+  /* Exactly six, one row: `auto-fit` would wrap into an uneven 5 + 1 in the
+     middle of the range, and the row must read as one instrument strip. */
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: 5px;
 }
 .pt-stat {
   display: flex;
-  flex-direction: row;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--sp-2);
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 1px;
+  min-width: 0;
   padding: 4px 8px;
   border-radius: var(--r-sm);
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.03), rgba(0, 0, 0, 0.3));
   border: 1px solid var(--hair);
 }
+.pt-stat > .t-micro {
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .pt-stat .readout {
   width: auto;
-  justify-content: flex-end;
+  justify-content: flex-start;
+  flex: 0 0 auto;
 }
 
 .pt-scorerow {
@@ -768,6 +844,28 @@
   border-color: rgba(255, 174, 26, 0.5);
   box-shadow: var(--glow-amber);
 }
+
+/* DRILL is a toggle. The pressed state is amber — the drill colour, matching
+   the focus-pair chips — so the one red primary action of the view stays on
+   SUBMIT / REVEAL / NEXT. */
+.pt-drill {
+  transition:
+    border-radius var(--t-base) var(--ease-snap),
+    background var(--t-base) linear,
+    border-color var(--t-base) linear,
+    color var(--t-base) linear,
+    box-shadow var(--t-base) linear;
+}
+.pt-drill[data-on] {
+  background: linear-gradient(180deg, rgba(255, 174, 26, 0.24), rgba(168, 108, 0, 0.16));
+  border-color: rgba(255, 174, 26, 0.55);
+  color: var(--amber-hi);
+  box-shadow: var(--glow-amber);
+  border-radius: var(--r-pill);
+}
+.pt-drill[data-on] .btn__cap {
+  text-shadow: 0 0 10px rgba(255, 209, 102, 0.45);
+}
 .pt-weakrow__id {
   display: flex;
   flex-direction: column;
@@ -902,6 +1000,54 @@
 }
 .pt-chip[data-on='true'][aria-pressed='true'] {
   text-shadow: 0 0 10px rgba(134, 240, 255, 0.5);
+}
+
+/* Chord-size multi-toggle: the number is the control, the small superscript is
+   how many shapes of the current flavour can be voiced that way. */
+.pt-sizes {
+  gap: 4px;
+}
+.pt-sizechip {
+  min-width: 46px;
+  justify-content: center;
+  gap: 5px;
+  font-family: var(--font-mono);
+  font-size: var(--fs-sm);
+  letter-spacing: 0.04em;
+}
+.pt-sizechip em {
+  font-style: normal;
+  font-family: var(--font-mono);
+  font-size: 8px;
+  line-height: 1;
+  padding: 1px 3px;
+  border-radius: var(--r-xs);
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--ink-ghost);
+}
+.pt-sizechip em:empty {
+  display: none;
+}
+.pt-sizechip[data-on='true'] em {
+  background: rgba(31, 208, 230, 0.18);
+  color: var(--cyan-hi);
+}
+/* A size no quality of this flavour can be voiced at (2 and 5 always). */
+.pt-sizechip[data-empty] {
+  opacity: 0.45;
+}
+.pt-sizechip[data-empty] em {
+  color: var(--ink-ghost);
+}
+.pt-sizechip:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.pt-sizechip[data-on]:disabled {
+  opacity: 0.85;
+}
+.pt-sizechip:disabled:active {
+  transform: none;
 }
 
 .pt-activeq {
@@ -1134,6 +1280,31 @@
   .pt-breaks {
     grid-template-columns: minmax(0, 1fr);
     gap: var(--sp-2);
+  }
+  .pt-page > .pt-ticker {
+    margin: 0 var(--sp-2) var(--sp-2);
+  }
+}
+
+@media (max-width: 1180px) {
+  /* Between the shell's stacked breakpoint and a full-width main column, the
+     weakness dash squeezes the readouts next to the sparkline: give the
+     readouts the whole row and put the sparkline underneath. */
+  .pt-wm__dash {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--sp-2);
+  }
+}
+
+@media (max-width: 1260px) {
+  /* Two even rows of three whenever six cells would be narrower than a caption
+     plus a value ("Mean latency" is the long one). */
+  .pt-stats {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 4px;
+  }
+  .pt-stat {
+    padding: 4px 7px;
   }
 }
 

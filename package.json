@@ -16,7 +16,8 @@
     "verify:fixes": "node scripts/verify-fixes.mjs",
     "icons": "node scripts/gen-icons.mjs",
     "fonts": "node scripts/fetch-fonts.mjs",
-    "check:deployed": "node scripts/check-deployed.mjs"
+    "check:deployed": "node scripts/check-deployed.mjs",
+    "verify:daw": "node scripts/verify-daw.mjs"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.2",

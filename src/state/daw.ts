@@ -137,7 +137,11 @@ export interface DawState {
   /** True when a track is audible given mute/solo state. */
   trackAudible: (id: string) => boolean;
   projectDuration: () => number;
-  snapValue: (t: number, excludeClipIds?: string[]) => number;
+  snapValue: (t: number, excludeClipIds?: string[], opts?: { includePlayhead?: boolean }) => number;
+  /** Trims overlaps on the given tracks, keeping `priorityIds` intact. */
+  settleOverlaps: (trackIds: string[], priorityIds?: string[]) => void;
+  /** First gap on a track able to hold `duration`, at or after `from`. */
+  freeSlot: (trackId: string, from: number, duration: number, ignoreIds?: string[]) => number;
 }
 
 interface Snapshot {
@@ -423,26 +427,121 @@ export const useDaw = create<DawState>()(
         return s.clips.reduce((m, c) => Math.max(m, c.start + c.duration), 0);
       },
 
+      /**
+       * Enforces the "no overlapping clips on a track" rule.
+       *
+       * Clips in `priorityIds` keep their geometry (they are what the user just
+       * dragged); anything they now overlap is trimmed back, and a neighbour
+       * trimmed to nothing is dropped. Trimming preserves the neighbour's
+       * source offset on the side that survives, so no audio is re-timed.
+       */
+      settleOverlaps: (trackIds, priorityIds = []) => {
+        if (!trackIds.length) return;
+        const pri = new Set(priorityIds);
+        const tracks = new Set(trackIds);
+        const MIN = 0.02;
+        set((s) => {
+          const kept: Clip[] = [];
+          let changed = false;
+          const byTrack = new Map<string, Clip[]>();
+          s.clips.forEach((c) => {
+            if (!tracks.has(c.trackId)) {
+              kept.push(c);
+              return;
+            }
+            const arr = byTrack.get(c.trackId) ?? [];
+            arr.push(c);
+            byTrack.set(c.trackId, arr);
+          });
+
+          byTrack.forEach((list) => {
+            // The priority clips win ties, so they settle last and stay put.
+            const ordered = [...list].sort((a, b) => a.start - b.start || (pri.has(a.id) ? 1 : 0) - (pri.has(b.id) ? 1 : 0));
+            const out: Clip[] = [];
+            for (const c of ordered) {
+              let cur = c;
+              for (const prev of out) {
+                const prevEnd = prev.start + prev.duration;
+                const curEnd = cur.start + cur.duration;
+                if (cur.start >= prevEnd - 1e-6 || curEnd <= prev.start + 1e-6) continue;
+                const prevWins = pri.has(prev.id) || (!pri.has(cur.id) && prev.start <= cur.start);
+                if (prevWins) {
+                  const newDur = prevEnd - cur.start;
+                  if (newDur <= MIN) {
+                    cur = { ...cur, duration: 0 };
+                  } else {
+                    const delta = cur.duration - newDur;
+                    cur = { ...cur, start: prevEnd, offset: cur.offset + delta * cur.speed, duration: newDur };
+                  }
+                } else {
+                  const newDur = cur.start - prev.start;
+                  if (newDur <= MIN) {
+                    prev.duration = 0;
+                  } else {
+                    prev.duration = newDur;
+                    prev.fadeOut = Math.min(prev.fadeOut, newDur);
+                  }
+                }
+                changed = true;
+              }
+              if (cur.duration > MIN) out.push(cur);
+              else changed = true;
+            }
+            out.forEach((c) => kept.push(c));
+          });
+
+          if (!changed) return s;
+          const ids = new Set(kept.map((c) => c.id));
+          return {
+            clips: kept,
+            selection: s.selection.filter((id) => ids.has(id)),
+            focusedClipId: s.focusedClipId && ids.has(s.focusedClipId) ? s.focusedClipId : null,
+          };
+        });
+      },
+
+      /** First gap on a track that can hold `duration`, at or after `from`. */
+      freeSlot: (trackId, from, duration, ignoreIds = []) => {
+        const ig = new Set(ignoreIds);
+        const busy = get()
+          .clips.filter((c) => c.trackId === trackId && !ig.has(c.id))
+          .map((c) => [c.start, c.start + c.duration] as [number, number])
+          .sort((a, b) => a[0] - b[0]);
+        let t = Math.max(0, from);
+        for (const [s0, s1] of busy) {
+          if (t + duration <= s0 + 1e-6) return t;
+          if (t < s1) t = s1;
+        }
+        return t;
+      },
+
       /** Snaps a time to the grid and/or nearby clip edges. */
-      snapValue: (t, excludeClipIds = []) => {
+      snapValue: (t, excludeClipIds = [], opts) => {
         const s = get();
         const { snap, gridDivision, pxPerSec } = s.view;
+        if (snap === 'off') return Math.max(0, t);
         const beat = 60 / Math.max(20, s.bpm);
         const grid = beat * (4 / gridDivision);
         const threshold = 8 / pxPerSec;
+        /* Grid snapping is unconditional: a grid line is always the closest
+           legal position, so quantising to the nearest one is the whole point
+           of the mode. Previously a pixel-derived threshold let a drag land
+           between lines whenever the pointer was more than ~8 px away. */
+        const gridT = Math.max(0, Math.round(t / grid) * grid);
+
+        if (snap === 'grid') return gridT;
+
         const candidates: number[] = [];
-        if (snap === 'grid' || snap === 'both') candidates.push(Math.round(t / grid) * grid);
-        if (snap === 'clips' || snap === 'both') {
-          const ex = new Set(excludeClipIds);
-          s.clips.forEach((c) => {
-            if (ex.has(c.id)) return;
-            candidates.push(c.start, c.start + c.duration);
-          });
-          candidates.push(0, s.position);
-        }
-        if (!candidates.length) return t;
+        const ex = new Set(excludeClipIds);
+        s.clips.forEach((c) => {
+          if (ex.has(c.id)) return;
+          candidates.push(c.start, c.start + c.duration);
+        });
+        candidates.push(0);
+        if (opts?.includePlayhead !== false) candidates.push(s.position);
+
         let best = candidates[0];
-        let bestD = Math.abs(candidates[0] - t);
+        let bestD = Number.POSITIVE_INFINITY;
         candidates.forEach((c) => {
           const d = Math.abs(c - t);
           if (d < bestD) {
@@ -450,7 +549,11 @@ export const useDaw = create<DawState>()(
             best = c;
           }
         });
-        return bestD <= threshold ? Math.max(0, best) : Math.max(0, t);
+
+        /* Clip/playhead edges are a magnetic assist, so they keep a tolerance;
+           when nothing is near, `both` still lands on the grid. */
+        if (bestD <= threshold) return Math.max(0, best);
+        return snap === 'both' ? gridT : Math.max(0, t);
       },
     }),
     {

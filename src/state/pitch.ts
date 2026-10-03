@@ -61,7 +61,13 @@ export interface PitchConfig {
   mode: PitchMode;
   chordFlavor: ChordFlavor;
   qualities: ChordQuality[];
-  chordSize: number;
+  /**
+   * Voice counts the chord generator may draw from. A set, not a single value:
+   * one question can be a triad and the next a seventh. The flavour and the
+   * scale are hard constraints in **both** modes — in note mode the question
+   * pool is the union of the selected qualities' chord tones.
+   */
+  chordSizes: number[];
   useScale: boolean;
   scaleRoot: number;
   scaleName: ScaleName;
@@ -73,6 +79,13 @@ export interface PitchConfig {
   /** Seconds the question sounds for. */
   sustain: number;
   answerInput: AnswerInput;
+  /**
+   * Sound a note when it is picked as an answer. Off by default: the question
+   * and the dial's per-detent drag scrub are the only reference audio, so a
+   * silent answer surface cannot be used to hunt for the answer by ear. The
+   * dial scrub stays audible either way — it is a deliberate drag, not a pick.
+   */
+  auditionOnPick: boolean;
   /** Play the question again automatically before revealing. */
   replays: number;
   /** Show the answer immediately after submitting. */
@@ -133,7 +146,7 @@ const DEFAULT_CONFIG: PitchConfig = {
   mode: 'note',
   chordFlavor: 'both',
   qualities: ['maj', 'min'],
-  chordSize: 3,
+  chordSizes: [3],
   useScale: false,
   scaleRoot: 0,
   scaleName: 'major',
@@ -144,6 +157,7 @@ const DEFAULT_CONFIG: PitchConfig = {
   playStyle: 'block',
   sustain: 2.4,
   answerInput: 'piano',
+  auditionOnPick: false,
   replays: 1,
   instantFeedback: true,
   adaptivity: 0.6,
@@ -152,24 +166,169 @@ const DEFAULT_CONFIG: PitchConfig = {
   inversions: false,
 };
 
+/* ── Persistence ───────────────────────────────────────────────────────── */
+
+/** What `litedaw.pitch` actually stores (see `partialize`). */
+interface PersistedPitch {
+  cfg: PitchConfig;
+  stats: PitchStats;
+  confusion: number[][];
+  qualityConfusion: Record<string, Record<string, number>>;
+}
+
+/** A config written by an older build: `chordSize` was a single number. */
+type LegacyConfig = Partial<PitchConfig> & { chordSize?: number };
+
+/**
+ * Fold a stored (possibly legacy) configuration forward onto the current
+ * defaults: a lone `chordSize` becomes the `chordSizes` set and any key added
+ * since the payload was written is filled in. A missing key must never reach
+ * the generator as `undefined`.
+ */
+function normalizeConfig(raw: LegacyConfig | undefined): PitchConfig {
+  const merged: PitchConfig & { chordSize?: number } = { ...DEFAULT_CONFIG, ...(raw ?? {}) };
+  const stored = raw?.chordSizes;
+  merged.chordSizes = cleanChordSizes(
+    Array.isArray(stored) ? stored : typeof raw?.chordSize === 'number' ? [raw.chordSize] : DEFAULT_CONFIG.chordSizes,
+  );
+  delete merged.chordSize;
+  return merged;
+}
+
 /* ── Question generation helpers ───────────────────────────────────────── */
 
 const MAJOR_SET: ChordQuality[] = ['maj', 'maj7', 'dom7', 'aug', 'sus4', 'sus2', 'six', 'add9', 'power'];
 const MINOR_SET: ChordQuality[] = ['min', 'min7', 'dim', 'min7b5', 'min6', 'power'];
 
-export function qualitiesFor(flavor: ChordFlavor, custom: ChordQuality[], size: number): ChordQuality[] {
+/** Every pitch class, ascending. */
+export const ALL_PCS: number[] = Array.from({ length: 12 }, (_, i) => i);
+/** Voice counts a chord question may use. */
+export const CHORD_SIZE_CHOICES = [2, 3, 4, 5] as const;
+export const MIN_CHORD_SIZE = CHORD_SIZE_CHOICES[0];
+export const MAX_CHORD_SIZE = CHORD_SIZE_CHOICES[CHORD_SIZE_CHOICES.length - 1];
+
+/** Legal voice counts: whole numbers inside the picker's range, deduped, sorted. */
+export function cleanChordSizes(sizes: readonly number[] | undefined): number[] {
+  const out = [...new Set((sizes ?? []).map((n) => Math.round(n)).filter((n) => Number.isFinite(n) && n >= MIN_CHORD_SIZE && n <= MAX_CHORD_SIZE))];
+  out.sort((a, b) => a - b);
+  return out.length ? out : [3];
+}
+
+/** Every quality the flavour selects, before the chord-size filter. */
+export function flavorQualities(flavor: ChordFlavor, custom: ChordQuality[]): ChordQuality[] {
   const base =
     flavor === 'major' ? MAJOR_SET : flavor === 'minor' ? MINOR_SET : flavor === 'custom' ? custom : [...MAJOR_SET, ...MINOR_SET];
   const unique = [...new Set(base)];
-  const sized = unique.filter((q) => CHORD_INTERVALS[q].length === size);
+  /* An empty `custom` selection must never produce an impossible question pool. */
+  return unique.length ? unique : [...MAJOR_SET, ...MINOR_SET];
+}
+
+/**
+ * Qualities of `flavor` whose voice count is one of `sizes`.
+ * Falls back to the unfiltered flavour set when no quality matches — the
+ * configuration panel warns about that case instead of the generator stalling.
+ */
+export function qualitiesFor(flavor: ChordFlavor, custom: ChordQuality[], sizes: readonly number[]): ChordQuality[] {
+  const unique = flavorQualities(flavor, custom);
+  const want = new Set(cleanChordSizes(sizes));
+  const sized = unique.filter((q) => want.has(CHORD_INTERVALS[q].length));
   return sized.length ? sized : unique;
 }
 
-/** Every pitch class the current scale/range combination permits. */
-export function allowedPcs(cfg: PitchConfig): number[] {
-  if (!cfg.useScale) return Array.from({ length: 12 }, (_, i) => i);
+/**
+ * The chord tones of the flavour: the union of the intervals of every quality
+ * the flavour selects. This is the note-mode question pool and it deliberately
+ * ignores the chord-size filter — voice counts shape the chords that are asked,
+ * never which single notes are fair game.
+ */
+export function flavorPcs(cfg: PitchConfig): number[] {
+  const set = new Set<number>();
+  flavorQualities(cfg.chordFlavor, cfg.qualities).forEach((q) =>
+    CHORD_INTERVALS[q].forEach((iv) => set.add(((iv % 12) + 12) % 12)),
+  );
+  return [...set].sort((a, b) => a - b);
+}
+
+/** Pitch classes of the configured scale. */
+export function scalePcs(cfg: PitchConfig): number[] {
   const set = SCALES[cfg.scaleName] as readonly number[];
-  return set.map((i) => (cfg.scaleRoot + i) % 12);
+  return [...new Set(set.map((i) => (((cfg.scaleRoot + i) % 12) + 12) % 12))].sort((a, b) => a - b);
+}
+
+/**
+ * Pitch classes a question may draw on.
+ *
+ * The chord flavour is a hard constraint on **both** modes:
+ *  · note mode — the pool is the union of the chord tones of the selected
+ *    qualities, so every single note that can be asked is a chord tone;
+ *  · chord mode — the pool is the set of legal *roots* (any pitch class: the
+ *    intervals are relative to the root), while the flavour constrains which
+ *    qualities — and therefore which chord tones — can be asked.
+ *
+ * `Constrain to scale` layers on top as an intersection. It can never empty the
+ * pool: when the scale excludes every candidate the scale layer is dropped and
+ * `scaleConflicts()` reports it so the panel can warn.
+ */
+export function allowedPcs(cfg: PitchConfig): number[] {
+  const base = cfg.mode === 'note' ? flavorPcs(cfg) : ALL_PCS;
+  if (!base.length) return ALL_PCS;
+  if (!cfg.useScale) return base;
+  const scale = new Set(scalePcs(cfg));
+  const hit = base.filter((pc) => scale.has(pc));
+  return hit.length ? hit : base;
+}
+
+/** True when `Constrain to scale` would empty the pool and is being ignored. */
+export function scaleConflicts(cfg: PitchConfig): boolean {
+  if (!cfg.useScale) return false;
+  const base = cfg.mode === 'note' ? flavorPcs(cfg) : ALL_PCS;
+  const scale = new Set(scalePcs(cfg));
+  return base.length > 0 && !base.some((pc) => scale.has(pc));
+}
+
+/**
+ * Every pitch class a *correct* answer can contain. The answer surface gates on
+ * this, so it can never offer a tone the generator will not ask — and never
+ * hides a tone the answer needs. Note mode asks exactly `allowedPcs`; chord
+ * mode asks every root × interval combination of the effective qualities.
+ */
+export function answerablePcs(cfg: PitchConfig): number[] {
+  const roots = allowedPcs(cfg);
+  if (cfg.mode === 'note') return roots;
+  const qs = qualitiesFor(cfg.chordFlavor, cfg.qualities, cfg.chordSizes);
+  const set = new Set<number>();
+  roots.forEach((r) => qs.forEach((q) => CHORD_INTERVALS[q].forEach((iv) => set.add((((r + iv) % 12) + 12) % 12))));
+  return [...set].sort((a, b) => a - b);
+}
+
+/**
+ * Voice a quality from `rootMidi`, optionally inverted `inversions` times.
+ *
+ * The raw interval table cannot be inverted by adding 12 to its first entries:
+ * `power` [0,7,12] and `add9` [0,4,7,14] already contain an octave doubling, so
+ * that rotation produces the same MIDI number in two voices. Instead the lowest
+ * voice is rotated up an octave once per inversion, deduped after every step,
+ * and the result is guaranteed strictly ascending with no repeats.
+ */
+export function voiceChord(rootMidi: number, quality: ChordQuality, inversions = 0): number[] {
+  const base = CHORD_INTERVALS[quality].map((i) => rootMidi + i);
+  let v = [...new Set(base)].sort((a, b) => a - b);
+  for (let k = 0; k < inversions && v.length > 2; k++) {
+    const next = [...v];
+    next[0] += 12;
+    next.sort((a, b) => a - b);
+    const uniq = [...new Set(next)];
+    if (uniq.length < 2) break;
+    v = uniq;
+  }
+  return v;
+}
+
+/** A voicing is legal when it is strictly ascending with no repeated note. */
+export function isCleanVoicing(midis: readonly number[]): boolean {
+  if (midis.length < 1) return false;
+  for (let i = 1; i < midis.length; i++) if (midis[i] <= midis[i - 1]) return false;
+  return true;
 }
 
 export function rangeMidis(cfg: PitchConfig): number[] {
@@ -277,7 +436,8 @@ export const usePitch = create<PitchStore>()(
 
         if (cfg.mode === 'note') {
           /* ── Weakness-weighted pitch class choice ───────────────────── */
-          const candidates = Array.from({ length: 12 }, (_, i) => i).filter((pc) => pcs.has(pc));
+          const candidates = ALL_PCS.filter((pc) => pcs.has(pc));
+          const candSet = new Set(candidates);
           const rowTotals = confusion.map((row) => row.reduce((a, b) => a + b, 0));
           const rowErr = confusion.map((row, i) => {
             const tot = rowTotals[i];
@@ -286,13 +446,18 @@ export const usePitch = create<PitchStore>()(
             return off / tot;
           });
 
+          /* A drill may name a class the current flavour excludes — keep the
+             half of the pair that is legal rather than asking an impossible
+             note (the pool is a hard constraint in both modes). */
+          const focus = (cfg.focusPair ?? []).filter((pc) => candSet.has(pc));
           let targetPc: number;
-          const focus = cfg.focusPair;
           const rnd = Math.random();
-          if (focus && rnd < 0.75) {
-            targetPc = Math.random() < 0.5 ? focus[0] : focus[1];
+          if (focus.length && rnd < 0.75) {
+            targetPc = focus[Math.floor(Math.random() * focus.length)];
             drilled = true;
-            drillLabel = `${pitchClassName(focus[0])} vs ${pitchClassName(focus[1])}`;
+            drillLabel = cfg.focusPair
+              ? `${pitchClassName(cfg.focusPair[0])} vs ${pitchClassName(cfg.focusPair[1])}`
+              : `weakest class ${pitchClassName(targetPc)}`;
           } else if (rnd < cfg.adaptivity) {
             const weights = candidates.map((pc) => 0.25 + rowErr[pc] * 3.4);
             targetPc = pickWeighted(candidates, weights);
@@ -325,8 +490,15 @@ export const usePitch = create<PitchStore>()(
         }
 
         /* ── Chord question ──────────────────────────────────────────── */
-        const qs = qualitiesFor(cfg.chordFlavor, cfg.qualities, cfg.chordSize);
-        const roots = Array.from({ length: 12 }, (_, i) => i).filter((pc) => pcs.has(pc));
+        /* Mixed sizes: one voice count is drawn per question, then the
+           qualities that can actually be voiced that way. A size with no
+           quality behind it is simply never drawn. */
+        const flavour = flavorQualities(cfg.chordFlavor, cfg.qualities);
+        const groups = cleanChordSizes(cfg.chordSizes)
+          .map((size) => flavour.filter((q) => CHORD_INTERVALS[q].length === size))
+          .filter((qs) => qs.length > 0);
+        const qs = groups.length ? groups[Math.floor(Math.random() * groups.length)] : flavour;
+
         const qc = get().qualityConfusion;
         const qualityWeights = qs.map((q) => {
           const row = qc[q] ?? {};
@@ -336,17 +508,45 @@ export const usePitch = create<PitchStore>()(
           return 0.3 + (1 - ok / tot) * 3;
         });
         const quality = pickWeighted(qs, qualityWeights);
+        const intervals = CHORD_INTERVALS[quality];
+        const roots = ALL_PCS.filter((pc) => pcs.has(pc));
         const rootPc = roots[Math.floor(Math.random() * roots.length)];
-        const octPool = pool.filter((m) => ((m % 12) + 12) % 12 === rootPc);
-        const rootMidi = octPool.length ? octPool[Math.floor(Math.random() * octPool.length)] : 60 + rootPc;
-        let midis = CHORD_INTERVALS[quality].map((i) => rootMidi + i);
 
-        if (cfg.inversions && midis.length > 2 && Math.random() < 0.5) {
-          const inv = 1 + Math.floor(Math.random() * (midis.length - 1));
-          for (let i = 0; i < inv; i++) midis[i] += 12;
-          midis = midis.sort((a, b) => a - b);
+        /* Voicing, then range. An inversion lifts the top voice by up to an
+           octave, so an inverted chord needs its root that much lower; when the
+           configured range cannot hold it the inversion is dropped rather than
+           the chord being truncated at the 108 ceiling (which used to leave a
+           "chord" of one or two notes). */
+        const top = Math.max(...intervals);
+        let invert =
+          cfg.inversions && intervals.length > 2 && Math.random() < 0.5
+            ? 1 + Math.floor(Math.random() * (intervals.length - 1))
+            : 0;
+        const rootAt = (allowance: number) => {
+          const fit = pool.filter((m) => ((m % 12) + 12) % 12 === rootPc && m + top + allowance <= 108);
+          return fit.length ? fit[Math.floor(Math.random() * fit.length)] : null;
+        };
+        let rootMidi = rootAt(invert ? 12 : 0);
+        if (rootMidi === null) {
+          invert = 0;
+          rootMidi = rootAt(0);
         }
-        midis = midis.filter((m) => m <= 108);
+        if (rootMidi === null) {
+          /* The whole range sits above the chord: use the highest root that fits. */
+          let m = 108 - top;
+          while (m > 24 && ((m % 12) + 12) % 12 !== rootPc) m -= 1;
+          rootMidi = m;
+        }
+
+        let midis = voiceChord(rootMidi, quality, invert);
+        if (!isCleanVoicing(midis)) midis = voiceChord(rootMidi, quality, 0);
+        /* Last guard: slide the voicing down in octaves until it is on the
+           keyboard. The pc set — everything grading cares about — is unchanged. */
+        while (Math.max(...midis) > 108 && Math.min(...midis) - 12 >= 12) {
+          midis = midis.map((m) => m - 12);
+          rootMidi -= 12;
+        }
+        midis = midis.filter((m) => m >= 12 && m <= 108);
 
         const q: Question = {
           id: qid++,
@@ -488,13 +688,13 @@ export const usePitch = create<PitchStore>()(
             stats: PitchStats;
             confusion: number[][];
             qualityConfusion: Record<string, Record<string, number>>;
-            cfg: PitchConfig;
+            cfg: LegacyConfig;
           }>;
           set((s) => ({
             stats: data.stats ?? s.stats,
             confusion: data.confusion ?? s.confusion,
             qualityConfusion: data.qualityConfusion ?? s.qualityConfusion,
-            cfg: data.cfg ? { ...s.cfg, ...data.cfg } : s.cfg,
+            cfg: data.cfg ? normalizeConfig({ ...s.cfg, ...data.cfg }) : s.cfg,
           }));
           return true;
         } catch {
@@ -504,8 +704,24 @@ export const usePitch = create<PitchStore>()(
     }),
     {
       name: 'litedaw.pitch',
-      version: 3,
-      partialize: (s) => ({
+      version: 4,
+      /* v3 stored a single `chordSize`; v4 stores the `chordSizes` set and the
+         `auditionOnPick` switch. Anything older than 4 is folded forward here
+         instead of being thrown away. */
+      migrate: (persisted): PersistedPitch => {
+        const p = (persisted ?? {}) as Partial<PersistedPitch>;
+        return {
+          cfg: normalizeConfig(p.cfg as LegacyConfig | undefined),
+          stats: p.stats ?? emptyStats(),
+          confusion: p.confusion ?? emptyMatrix(),
+          qualityConfusion: p.qualityConfusion ?? emptyQualityMatrix(),
+        };
+      },
+      merge: (persisted, current) => {
+        const p = (persisted ?? {}) as Partial<PersistedPitch>;
+        return { ...current, ...p, cfg: normalizeConfig(p.cfg as LegacyConfig | undefined) };
+      },
+      partialize: (s): PersistedPitch => ({
         cfg: s.cfg,
         stats: s.stats,
         confusion: s.confusion,

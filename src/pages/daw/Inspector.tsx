@@ -3,12 +3,13 @@
    Context-sensitive parameter bay: clip, track, parametric EQ and session.
    ========================================================================= */
 
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from '../../design/Icon';
-import { Btn, Chip, Divider, Empty, Field, NumDrag, Panel, Segmented, Tabs, ToggleRow, Well, useToast } from '../../components/ui/kit';
+import { Btn, Chip, Divider, Empty, Field, NumDrag, Panel, Segmented, Tabs, Well, useToast } from '../../components/ui/kit';
 import { Knob, Bar } from '../../components/ui/Hardware';
 import { audioBufferToWavBlob } from './wavExport';
 import { buffers } from '../../daw/buffers';
+import { clearMedia, totalBytes as totalMediaBytes } from '../../daw/media';
 import { applyFades, normalize as normalizeData, peakDb, rmsDb } from '../../audio/dsp';
 import { transport } from '../../audio/dawEngine';
 import { useDaw, type EqBand, type EqBandType } from '../../state/daw';
@@ -431,23 +432,18 @@ function TrackTab({ trackId }: { trackId: string }) {
         />
       </div>
 
-      <ToggleRow label="Mute" icon="speakerOff" on={track.mute} onChange={(v) => update(trackId, { mute: v })} />
-      <ToggleRow label="Solo" icon="headphones" on={track.solo} onChange={(v) => update(trackId, { solo: v })} />
-      <ToggleRow label="Record arm" icon="record" on={track.armed} onChange={(v) => update(trackId, { armed: v })} />
-      <ToggleRow
-        label="EQ active"
-        icon="eq"
-        hint="Four-band parametric, pre-pan"
-        on={track.eqOn}
-        onChange={(v) => update(trackId, { eqOn: v })}
-      />
-      <ToggleRow
-        label="Input monitor"
-        icon="mic"
-        hint="Hear the live input through this track"
-        on={track.inputMonitor}
-        onChange={(v) => update(trackId, { inputMonitor: v })}
-      />
+      {/* Five switches, one compact strip. As full-width toggle rows they ate
+          most of the inspector's height and pushed the knobs off-screen. */}
+      <div className="swstrip" role="group" aria-label="Track switches">
+        <SwitchCell icon="speakerOff" label="Mute" tone="amber" on={track.mute} onChange={(v) => update(trackId, { mute: v })} />
+        <SwitchCell icon="headphones" label="Solo" tone="green" on={track.solo} onChange={(v) => update(trackId, { solo: v })} />
+        <SwitchCell icon="record" label="Arm" tone="red" on={track.armed} onChange={(v) => update(trackId, { armed: v })} />
+        <SwitchCell icon="eq" label="EQ" tone="cyan" on={track.eqOn} onChange={(v) => update(trackId, { eqOn: v })} />
+        <SwitchCell icon="mic" label="Monitor" tone="red" on={track.inputMonitor} onChange={(v) => update(trackId, { inputMonitor: v })} />
+      </div>
+      <p className="field__hint" style={{ margin: 0 }}>
+        EQ is a four-band parametric placed pre-pan. Input monitor routes the live input through this strip.
+      </p>
 
       <Well className="col" style={{ gap: 3 }}>
         <div className="kv">
@@ -488,6 +484,38 @@ function TrackTab({ trackId }: { trackId: string }) {
         Delete track
       </Btn>
     </>
+  );
+}
+
+/** One cell of the track switch strip: icon, legend, LED-style state. */
+function SwitchCell({
+  icon,
+  label,
+  tone,
+  on,
+  onChange,
+}: {
+  icon: Parameters<typeof Icon>[0]['name'];
+  label: string;
+  tone: 'red' | 'green' | 'amber' | 'cyan';
+  on: boolean;
+  onChange: (v: boolean) => void;
+}) {
+  return (
+    <button
+      type="button"
+      className="swcell"
+      data-on={on}
+      data-tone={tone}
+      role="switch"
+      aria-checked={on}
+      aria-label={label}
+      onClick={() => onChange(!on)}
+    >
+      <Icon name={icon} size={14} />
+      <span className="swcell__label">{label}</span>
+      <span className="swcell__led" />
+    </button>
   );
 }
 
@@ -619,13 +647,29 @@ function EqTab({ trackId }: { trackId: string }) {
               <stop offset="100%" stopColor="rgba(34,224,124,0)" />
             </linearGradient>
           </defs>
-          {[0.25, 0.5, 0.75].map((f) => (
-            <line key={f} x1={fx(F_MIN * Math.pow(F_MAX / F_MIN, f))} y1={0} x2={fx(F_MIN * Math.pow(F_MAX / F_MIN, f))} y2={H} stroke="rgba(190,210,225,.08)" />
+          {/* Guides are placed on DECADES and labelled, so each line has a
+              readable meaning. Three unlabelled lines at arbitrary fractions
+              of the axis just looked like stray marks. */}
+          {[100, 1000, 10000].map((f) => (
+            <g key={f}>
+              <line x1={fx(f)} y1={0} x2={fx(f)} y2={H} stroke="rgba(190,210,225,.13)" />
+              <text x={fx(f) + 3} y={H - 4} className="eqgrab__tick">
+                {f >= 1000 ? `${f / 1000}k` : f}
+              </text>
+            </g>
           ))}
           {[-12, -6, 6, 12].map((d) => (
-            <line key={d} x1={0} y1={fy(d)} x2={W} y2={fy(d)} stroke="rgba(190,210,225,.07)" />
+            <g key={d}>
+              <line x1={0} y1={fy(d)} x2={W} y2={fy(d)} stroke="rgba(190,210,225,.09)" />
+              <text x={3} y={fy(d) - 2} className="eqgrab__tick">
+                {d > 0 ? `+${d}` : d}
+              </text>
+            </g>
           ))}
-          <line x1={0} y1={fy(0)} x2={W} y2={fy(0)} stroke="rgba(190,210,225,.24)" />
+          <line x1={0} y1={fy(0)} x2={W} y2={fy(0)} stroke="rgba(190,210,225,.26)" />
+          <text x={3} y={fy(0) - 2} className="eqgrab__tick">
+            0 dB
+          </text>
           <path d={`${path} L${W} ${H / 2} L0 ${H / 2} Z`} fill="url(#eqfill)" />
           <path d={path} fill="none" stroke={track.eqOn ? 'var(--green)' : 'var(--alu-600)'} strokeWidth={1.6} style={track.eqOn ? { filter: 'drop-shadow(0 0 5px rgba(34,224,124,.7))' } : undefined} />
           {track.eq.map((b, i) =>
@@ -637,7 +681,7 @@ function EqTab({ trackId }: { trackId: string }) {
             ) : null,
           )}
         </svg>
-        <span className="eqgrab__hint">DRAG NODES · 20Hz–20kHz</span>
+        <span className="eqgrab__hint">DRAG NODES · 20 Hz – 20 kHz · ±18 dB</span>
       </div>
 
       <div className="bandlist">
@@ -698,6 +742,12 @@ function SessionTab({ onExport }: { onExport: () => void }) {
   const toast = useToast();
   const totalBytes = buffers.totalBytes();
   const dur = s.projectDuration();
+  const [vaultBytes, setVaultBytes] = useState(0);
+  const [busy, setBusy] = useState(false);
+
+  useEffect(() => {
+    void totalMediaBytes().then(setVaultBytes);
+  }, [s.clips.length]);
 
   return (
     <>
@@ -724,6 +774,74 @@ function SessionTab({ onExport }: { onExport: () => void }) {
             />
           </div>
         </Field>
+      </div>
+
+      <Field
+        label="Loop range"
+        icon="loop"
+        hint="Drag the tabs on the ruler, or type exact positions. Snapping applies."
+      >
+        <div className="row" style={{ gap: 6 }}>
+          <NumDrag
+            value={Number(s.loopStart.toFixed(3))}
+            onChange={(v) => s.setTransport({ loopStart: Math.max(0, Math.min(v, s.loopEnd - 0.05)) })}
+            min={0}
+            max={Math.max(1, dur)}
+            step={0.01}
+            unit="s"
+          />
+          <span className="t-readout">→</span>
+          <NumDrag
+            value={Number(s.loopEnd.toFixed(3))}
+            onChange={(v) => s.setTransport({ loopEnd: Math.max(s.loopStart + 0.05, v) })}
+            min={0.05}
+            max={Math.max(1, dur) * 4}
+            step={0.01}
+            unit="s"
+          />
+          <Btn
+            size="sm"
+            variant={s.loopOn ? 'primary' : 'ghost'}
+            icon="loop"
+            onClick={() => s.setTransport({ loopOn: !s.loopOn })}
+          >
+            {s.loopOn ? 'On' : 'Off'}
+          </Btn>
+        </div>
+      </Field>
+
+      <div className="row" style={{ gap: 6 }}>
+        <Btn
+          size="sm"
+          variant="ghost"
+          icon="target"
+          className="grow"
+          disabled={!s.selection.length}
+          onClick={() => {
+            const sel = s.clips.filter((c) => s.selection.includes(c.id));
+            if (!sel.length) return;
+            const start = Math.min(...sel.map((c) => c.start));
+            const end = Math.max(...sel.map((c) => c.start + c.duration));
+            s.setTransport({ loopOn: true, loopStart: start, loopEnd: end });
+            toast('Loop set to the selection', 'ok');
+          }}
+        >
+          Loop from selection
+        </Btn>
+        <Btn
+          size="sm"
+          variant="ghost"
+          icon="grid"
+          className="grow"
+          onClick={() => {
+            const bar = (60 / s.bpm) * s.numerator;
+            const b0 = Math.floor(s.position / bar) * bar;
+            s.setTransport({ loopOn: true, loopStart: b0, loopEnd: b0 + bar * 2 });
+            toast('Loop set to 2 bars at the playhead', 'ok');
+          }}
+        >
+          2 bars here
+        </Btn>
       </div>
 
       <Field label="Grid division" icon="magnet" hint="Snap resolution in note values per beat">
@@ -763,7 +881,35 @@ function SessionTab({ onExport }: { onExport: () => void }) {
           <span className="kv__k">Loaded sources</span>
           <span className="kv__v">{buffers.all().length}</span>
         </div>
+        <div className="kv">
+          <span className="kv__k">Media vault</span>
+          <span className="kv__v">{(vaultBytes / (1024 * 1024)).toFixed(1)} MB</span>
+        </div>
       </Well>
+
+      <p className="field__hint" style={{ margin: 0 }}>
+        Source files are persisted in the browser so every clip relinks automatically after a
+        reload. Decoding happens again on load, which is why the first paint after a refresh can
+        take a moment on a large session.
+      </p>
+      <Btn
+        size="sm"
+        variant="danger"
+        icon="trash"
+        block
+        disabled={busy || vaultBytes === 0}
+        onClick={() => {
+          setBusy(true);
+          void clearMedia()
+            .then(() => {
+              setVaultBytes(0);
+              toast('Media vault cleared — clips will not relink after a reload', 'warn');
+            })
+            .finally(() => setBusy(false));
+        }}
+      >
+        Purge stored media ({(vaultBytes / (1024 * 1024)).toFixed(1)} MB)
+      </Btn>
 
       <Divider />
 
@@ -812,8 +958,7 @@ function SessionTab({ onExport }: { onExport: () => void }) {
         </Btn>
       </div>
       <p className="field__hint">
-        Sessions persist automatically. Audio buffers are re-imported per session — drop your files again after a
-        reload, or keep them open in the same tab.
+        Sessions persist automatically, and imported source files are relinked from the media vault on load.
       </p>
     </>
   );

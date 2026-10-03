@@ -30,6 +30,12 @@ export interface BeatVisualiserProps {
   live: boolean;
   /** Tempo used when the reference is silent (the player's dialled answer). */
   previewBpm: number;
+  /**
+   * The plinth under the pendulum is a real control: it switches the
+   * instrument between live motion and pure listening. Omit it and the plate
+   * renders as inert structure instead of pretending to be a button.
+   */
+  onToggleLive?: () => void;
   children?: ReactNode;
 }
 
@@ -66,6 +72,7 @@ export function BeatVisualiser({
   endsAt,
   live,
   previewBpm,
+  onToggleLive,
   children,
 }: BeatVisualiserProps) {
   const lampRefs = useRef<(SVGGElement | null)[]>([]);
@@ -394,8 +401,35 @@ export function BeatVisualiser({
           </g>
           <path d={`M${AX - 17} ${PIVOT_Y + 9}L${AX} ${PIVOT_Y - 5}L${AX + 17} ${PIVOT_Y + 9}`} className="bpm-bracket" />
           <circle cx={AX} cy={PIVOT_Y} r={5.5} className="bpm-pivot" />
-          <rect x={AX - 27} y={276} width={54} height={13} rx={2} className="bpm-base" />
-          <text x={AX} y={266} className="bpm-base__cap" textAnchor="middle">
+
+          {/* ── Plinth: the pendulum's power plate. A real switch, not an
+                 inert rectangle — it toggles the whole instrument. ────── */}
+          <g
+            className="bpm-plinth"
+            data-on={live ? 'true' : 'false'}
+            data-interactive={onToggleLive ? 'true' : undefined}
+            role={onToggleLive ? 'switch' : undefined}
+            aria-checked={onToggleLive ? live : undefined}
+            aria-label={onToggleLive ? 'Beat visualiser' : undefined}
+            tabIndex={onToggleLive ? 0 : undefined}
+            onClick={onToggleLive}
+            onKeyDown={(e) => {
+              if (!onToggleLive) return;
+              if (e.key === 'Enter' || e.code === 'Space') {
+                e.preventDefault();
+                onToggleLive();
+              }
+            }}
+          >
+            <rect x={AX - 46} y={268} width={92} height={20} rx={3} className="bpm-plinth__plate" />
+            <circle cx={AX - 34} cy={278} r={3.4} className="bpm-plinth__led" />
+            <text x={AX + 5} y={279} className="bpm-plinth__cap" textAnchor="middle">
+              {live ? 'PENDULUM ON' : 'PENDULUM OFF'}
+            </text>
+          </g>
+          {/* Sits clear of the plinth caption below it — at 262 the two labels
+              collided into an unreadable smear at every rendered size. */}
+          <text x={AX} y={251} className="bpm-base__cap" textAnchor="middle">
             TEMPO PENDULUM
           </text>
 

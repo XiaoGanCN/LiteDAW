@@ -5,9 +5,28 @@
    rAF loop (0…1), which every glow in the instrument is derived from.
    ========================================================================= */
 
+/* ══════════════════════════════════════════════════════════════════════════
+   PAGE GRID — the ticker is the last child of the page, so on desktop it is a
+   full-width footer under both columns and in the stacked portrait layout it
+   lands at the very bottom of the module instead of mid-page.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* The main column is a flex stack whose last child is the ticker, so the page
+   grid keeps its standard two columns and the footer never becomes a grid item
+   of its own. */
+.pagegrid.bpm-page .pagegrid__main {
+  gap: var(--sp-3);
+}
+.pagegrid.bpm-page .pagegrid__main > .ticker {
+  flex: 0 0 auto;
+  margin-top: auto;
+}
+
 .bpm-page {
   --bpm-lamp: var(--red);
   --bpm-lamp-hi: var(--red-hi);
+  /* Round / Window / Session share one width so the three columns line up. */
+  --bpm-time-w: 104px;
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -168,6 +187,10 @@
   text-shadow: var(--text-glow-cyan);
   letter-spacing: 0.22em;
 }
+.bpm-stage__tag--off {
+  color: var(--ink-ghost);
+  text-shadow: none;
+}
 
 /* ══════════════════════════════════════════════════════════════════════════
    PENDULUM
@@ -236,6 +259,62 @@
   font-size: 7.4px;
   letter-spacing: 0.2em;
   fill: var(--ink-ghost);
+}
+
+/* ── Plinth: the pendulum's power plate. A real switch — it lights when the
+      instrument is live, dims when off, and takes pointer + keyboard. ──── */
+
+.bpm-plinth {
+  outline: none;
+}
+.bpm-plinth[data-interactive] {
+  cursor: pointer;
+}
+.bpm-plinth__plate {
+  fill: var(--carbon-700);
+  stroke: rgba(0, 0, 0, 0.75);
+  stroke-width: 1;
+  transition:
+    fill var(--t-base) var(--ease-out),
+    stroke var(--t-base) var(--ease-out);
+}
+.bpm-plinth__led {
+  fill: var(--carbon-400);
+  transition: fill var(--t-base) linear, filter var(--t-base) linear;
+}
+.bpm-plinth__cap {
+  font-family: var(--font-label);
+  font-size: 7.6px;
+  font-weight: 600;
+  letter-spacing: 0.16em;
+  fill: var(--ink-faint);
+  pointer-events: none;
+  transition: fill var(--t-base) linear;
+}
+.bpm-plinth[data-on='true'] .bpm-plinth__plate {
+  fill: var(--carbon-500);
+  stroke: rgba(255, 255, 255, 0.12);
+}
+.bpm-plinth[data-on='true'] .bpm-plinth__led {
+  fill: var(--amber-hi);
+  filter: drop-shadow(0 0 4px var(--amber));
+}
+.bpm-plinth[data-on='true'] .bpm-plinth__cap {
+  fill: var(--alu-200);
+}
+.bpm-plinth[data-interactive]:hover .bpm-plinth__plate {
+  fill: var(--carbon-400);
+  stroke: var(--hair-3);
+}
+.bpm-plinth[data-interactive]:hover .bpm-plinth__cap {
+  fill: var(--alu-100);
+}
+.bpm-plinth[data-interactive]:focus-visible .bpm-plinth__plate {
+  stroke: var(--cyan);
+  stroke-width: 1.6;
+}
+.bpm-plinth[data-interactive]:active .bpm-plinth__plate {
+  fill: var(--carbon-600);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -392,7 +471,8 @@
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   TRANSPORT ROW
+   TRANSPORT — the stage is a pure instrument: bus/ref/click telemetry and the
+   three lap times. The round actions live in Answer Entry.
    ══════════════════════════════════════════════════════════════════════════ */
 
 .bpm-transport {
@@ -404,16 +484,11 @@
   border-top: 1px solid var(--hair);
   background: linear-gradient(180deg, rgba(0, 0, 0, 0.28), transparent);
 }
-.bpm-transport__act {
-  display: flex;
-  align-items: center;
-  gap: var(--sp-2);
-  flex-wrap: wrap;
-}
 .bpm-transport__meters {
   display: flex;
   align-items: center;
   gap: var(--sp-3);
+  flex-wrap: wrap;
 }
 .bpm-meter {
   display: inline-flex;
@@ -427,11 +502,28 @@
   flex-wrap: wrap;
   margin-left: auto;
 }
+
+/* ONE presentation for Round / Window / Session: identical width, type size,
+   padding and label treatment, so the three columns line up exactly. */
 .bpm-time {
   display: flex;
   flex-direction: column;
   gap: 3px;
-  align-items: flex-end;
+  align-items: stretch;
+  flex: 0 0 auto;
+  width: var(--bpm-time-w);
+  min-width: 0;
+}
+.bpm-time__label {
+  text-align: right;
+  color: var(--ink-ghost);
+}
+.bpm-time__val.readout {
+  width: 100%;
+  justify-content: flex-end;
+  font-size: var(--fs-md);
+  padding: 6px 9px 5px;
+  transition: color var(--t-base) linear, box-shadow var(--t-base) var(--ease-out);
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
@@ -525,23 +617,41 @@
   align-items: end;
   flex: 1 1 260px;
 }
+.bpm-tapinfo__state {
+  grid-column: 1 / -1;
+  color: var(--amber-hi);
+  letter-spacing: 0.04em;
+  line-height: 1.35;
+}
 
-.bpm-wheelrow {
+/* ── Answer row ───────────────────────────────────────────────────────────
+   The side column has a real minimum width, so when it cannot sit beside the
+   wheel it wraps and the well centres itself in the full row — at 390/560/900
+   there is never a hole beside a 148 px wheel. */
+
+.bpm-answer {
   display: flex;
   align-items: flex-start;
-  gap: var(--sp-4);
   flex-wrap: wrap;
+  gap: var(--sp-4);
 }
-.bpm-wheelwell {
+.bpm-answer__well {
+  flex: 0 0 auto;
+  margin-inline: auto;
   display: flex;
   flex-direction: column;
   align-items: center;
   gap: var(--sp-1);
-  flex: 0 0 auto;
+  max-width: 100%;
+}
+.bpm-wheelarm {
+  display: contents;
 }
 .bpm-wheelwell__gate {
   color: var(--ink-ghost);
-  letter-spacing: 0.28em;
+  letter-spacing: 0.2em;
+  text-align: center;
+  line-height: 1.3;
 }
 .bpm-wheel--locked {
   pointer-events: none;
@@ -551,8 +661,65 @@
   display: flex;
   flex-direction: column;
   gap: var(--sp-3);
-  flex: 1 1 220px;
+  flex: 1 1 200px;
   min-width: 0;
+}
+/* Keep the wheel well and the side readout side-by-side only while there is
+   room for a usable side column; below that the well stands alone, centred. */
+@media (min-width: 480px) {
+  .bpm-answer__well {
+    margin-inline: 0;
+  }
+}
+
+/* ── Round actions ────────────────────────────────────────────────────────
+   Exactly one red primary at any moment, sitting in the panel that commits
+   the answer. */
+
+.bpm-actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp-3);
+  margin-top: var(--sp-3);
+  padding-top: var(--sp-3);
+  border-top: 1px solid var(--hair);
+  background: linear-gradient(180deg, rgba(0, 0, 0, 0.24), transparent);
+}
+.bpm-actions__main {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  animation: bpm-action-in var(--t-base) var(--ease-snap);
+}
+.bpm-actions__alt {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+.bpm-actions__key {
+  margin-left: auto;
+  color: var(--ink-ghost);
+  text-align: right;
+}
+@keyframes bpm-action-in {
+  from {
+    transform: translate3d(0, 4px, 0);
+    opacity: 0;
+  }
+  to {
+    transform: none;
+    opacity: 1;
+  }
+}
+
+.bpm-entry__switch {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 .bpm-wheelside__mark {
   display: flex;
@@ -603,15 +770,21 @@
 }
 .bpm-reveal__head {
   display: grid;
-  grid-template-columns: minmax(0, 1.15fr) minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr) minmax(0, 1fr);
   gap: var(--sp-3);
-  align-items: start;
+  align-items: stretch;
+}
+/* Every column runs the same three-row rhythm — caption, value, footnote — so
+   the delta block sits on the same lines as the target / answer numbers. */
+.bpm-reveal__cell {
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
 }
 .bpm-reveal__truth,
 .bpm-reveal__you {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
   min-width: 0;
 }
 .bpm-reveal__mark {
@@ -632,27 +805,35 @@
   color: var(--alu-300);
 }
 .bpm-reveal__delta {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-start;
-  gap: 6px;
   padding: var(--sp-2) var(--sp-3);
   border-radius: var(--r-md);
   border: 1px solid var(--hair);
   background: rgba(0, 0, 0, 0.26);
   box-shadow: var(--sh-inset-top);
 }
+/* The two deltas are labelled columns: each caption sits directly over the
+   number it describes, the same contract the round history uses. */
+.bpm-reveal__deltagrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: var(--sp-2);
+  align-items: end;
+}
+.bpm-reveal__deltacell {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.bpm-reveal__deltacell .t-micro {
+  color: var(--ink-ghost);
+}
 .bpm-reveal__deltaval {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
   font-size: var(--fs-2xl);
   line-height: 1;
   color: var(--alu-100);
-}
-.bpm-reveal__deltaval em {
-  font-style: normal;
-  font-family: var(--font-label);
-  font-size: var(--fs-tiny);
-  letter-spacing: 0.16em;
-  color: var(--ink-ghost);
 }
 .bpm-reveal__deltaval[data-tone='correct'] {
   color: var(--green-hi);
@@ -667,8 +848,23 @@
   text-shadow: var(--text-glow-red);
 }
 .bpm-reveal__deltapct {
-  font-size: var(--fs-sm);
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  font-size: var(--fs-lg);
+  line-height: 1;
   color: var(--ink-dim);
+}
+.bpm-reveal__deltapct[data-tone='correct'] {
+  color: var(--green-hi);
+}
+.bpm-reveal__deltapct[data-tone='close'] {
+  color: var(--amber-hi);
+}
+.bpm-reveal__deltapct[data-tone='off'] {
+  color: var(--red-hi);
+}
+.bpm-reveal__deltanote {
+  color: var(--ink-ghost);
 }
 .bpm-reveal__meta {
   display: grid;
@@ -801,7 +997,7 @@
 }
 .bpm-history__row {
   display: grid;
-  grid-template-columns: 26px 1fr 16px 1fr 1fr 1fr;
+  grid-template-columns: 24px minmax(0, 1fr) 14px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
   align-items: center;
   gap: 4px;
   padding: 4px 7px;
@@ -818,6 +1014,28 @@
   border-left-color: transparent;
   animation: none;
   padding-bottom: 2px;
+  font-size: var(--fs-micro);
+}
+/* The header shares the body's column template AND its alignment, so "Δ BPM"
+   and "Δ %" sit exactly over the numbers they label at every width. */
+.bpm-history__row--head > * {
+  font-family: var(--font-label);
+  font-weight: 600;
+  letter-spacing: var(--tr-label);
+  text-transform: uppercase;
+}
+.bpm-history__row--head .bpm-history__idx,
+.bpm-history__row--head .bpm-history__val,
+.bpm-history__row--head .bpm-history__err,
+.bpm-history__row--head .bpm-history__arrow {
+  color: var(--ink-ghost);
+}
+.bpm-history__row--head .bpm-history__idx,
+.bpm-history__row--head .bpm-history__val {
+  text-align: left;
+}
+.bpm-history__row--head .bpm-history__err {
+  text-align: right;
 }
 .bpm-history__row[data-tone='correct'] {
   border-left-color: var(--green);
@@ -949,16 +1167,25 @@
   font-style: normal;
   color: var(--ink-ghost);
 }
+/* The caption gets its own line so it can wrap instead of being crammed
+   against the end labels (and instead of being ellipsised mid-word). */
 .bpm-axis {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.bpm-axis__ends {
   display: flex;
   justify-content: space-between;
   align-items: baseline;
   gap: var(--sp-2);
 }
-.bpm-axis .t-micro:nth-child(2) {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.bpm-axis__note {
+  color: var(--ink-ghost);
+  line-height: 1.35;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .bpm-scatter {
@@ -1085,6 +1312,256 @@
   cursor: not-allowed;
 }
 
+/* ── Tempo range: two thumbs, full panel width ────────────────────────── */
+
+.bpm-range2 {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-2);
+  width: 100%;
+  min-width: 0;
+}
+.bpm-range2[data-locked='true'] {
+  opacity: 0.45;
+}
+.bpm-dual {
+  width: 100%;
+  min-width: 0;
+}
+.bpm-dual__track {
+  position: relative;
+  height: 26px;
+  border-radius: var(--r-sm);
+  background: linear-gradient(180deg, #04070a, #0b1014);
+  border: 1px solid rgba(0, 0, 0, 0.8);
+  box-shadow: var(--sh-inset-well);
+  cursor: pointer;
+  touch-action: none;
+}
+.bpm-dual[data-disabled='true'] .bpm-dual__track {
+  cursor: not-allowed;
+}
+.bpm-dual__rail {
+  position: absolute;
+  left: 10px;
+  right: 10px;
+  top: 50%;
+  height: 5px;
+  margin-top: -2.5px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #05080b, #0d1216);
+  border: 1px solid rgba(0, 0, 0, 0.8);
+  box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.85);
+}
+.bpm-dual__fill {
+  position: absolute;
+  top: 50%;
+  height: 5px;
+  margin-top: -2.5px;
+  border-radius: 3px;
+  background: linear-gradient(180deg, var(--cyan-hi), var(--cyan-lo));
+  box-shadow: 0 0 10px rgba(31, 208, 230, 0.4);
+  transition: left var(--t-fast) linear, right var(--t-fast) linear;
+}
+.bpm-dual[data-drag] .bpm-dual__fill {
+  transition: none;
+}
+.bpm-dual__thumb {
+  position: absolute;
+  top: 50%;
+  width: 18px;
+  height: 24px;
+  margin: -12px 0 0 -9px;
+  display: grid;
+  place-items: center;
+  border-radius: 3px;
+  background: linear-gradient(180deg, #5a646e, #2c343b 55%, #232a30);
+  border: 1px solid rgba(0, 0, 0, 0.84);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), 0 1px 4px rgba(0, 0, 0, 0.7);
+  cursor: ew-resize;
+  touch-action: none;
+  outline: none;
+  transition:
+    border-radius var(--t-base) var(--ease-snap),
+    box-shadow var(--t-base) var(--ease-out),
+    transform var(--t-fast) var(--ease-mech);
+}
+.bpm-dual__thumb[data-end='low'] {
+  border-bottom: 2px solid var(--cyan);
+}
+.bpm-dual__thumb[data-end='high'] {
+  border-bottom: 2px solid var(--amber);
+}
+.bpm-dual__thumb:hover,
+.bpm-dual__thumb[data-drag='true'] {
+  border-radius: var(--r-pill);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.36), 0 1px 6px rgba(0, 0, 0, 0.8), var(--glow-cyan);
+}
+.bpm-dual__thumb:focus-visible {
+  border-radius: var(--r-pill);
+  box-shadow: 0 0 0 2px rgba(31, 208, 230, 0.55), 0 1px 6px rgba(0, 0, 0, 0.8);
+}
+.bpm-dual[data-disabled='true'] .bpm-dual__thumb {
+  pointer-events: none;
+  opacity: 0.5;
+}
+.bpm-dual__grip {
+  width: 2px;
+  height: 10px;
+  border-radius: 1px;
+  background: repeating-linear-gradient(180deg, rgba(255, 255, 255, 0.32) 0 1px, transparent 1px 3px);
+}
+.bpm-range2__ends {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--sp-2);
+}
+.bpm-range2__end {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+}
+.bpm-range2__end--mid {
+  align-items: center;
+  flex: 1 1 auto;
+}
+.bpm-range2__end--mid .readout {
+  justify-content: center;
+}
+
+/* ── Answer dial (BPM) ───────────────────────────────────────────────────
+   Reuses the shared `.dial` vocabulary; adds the zoom-window readout that
+   makes the fine mode legible. */
+
+.bpm-dial {
+  width: 100%;
+}
+.bpm-dial__svg {
+  cursor: grab;
+}
+.bpm-dial[data-drag='true'] .bpm-dial__svg {
+  cursor: grabbing;
+}
+.bpm-dial__arc {
+  transition: stroke var(--t-base) linear, opacity var(--t-base) linear;
+}
+.bpm-dial__window {
+  animation: bpm-zoom-in var(--t-base) var(--ease-snap);
+}
+@keyframes bpm-zoom-in {
+  from {
+    opacity: 0;
+    stroke-width: 26;
+  }
+  to {
+    opacity: 0.22;
+    stroke-width: 16;
+  }
+}
+.bpm-dial__mark line,
+.bpm-dial__mark text {
+  transition: opacity var(--t-base) linear;
+}
+.bpm-dial__head {
+  transform-box: view-box;
+}
+.bpm-dial__knob {
+  fill: var(--carbon-850);
+  stroke: var(--cyan);
+  stroke-width: 2.4;
+  filter: drop-shadow(0 0 6px rgba(31, 208, 230, 0.5));
+}
+.bpm-dial[data-fine='true'] .bpm-dial__knob {
+  stroke: var(--amber-hi);
+  filter: drop-shadow(0 0 7px rgba(255, 174, 26, 0.6));
+}
+.bpm-dial__dot {
+  fill: var(--cyan);
+}
+.bpm-dial[data-fine='true'] .bpm-dial__dot {
+  fill: var(--amber-hi);
+}
+.bpm-dial__tick {
+  font-size: 10px;
+  fill: var(--ink-faint);
+}
+.bpm-dial__tick[data-major] {
+  fill: var(--alu-300);
+}
+.bpm-dial__hub {
+  fill: rgba(0, 0, 0, 0.4);
+  stroke: rgba(255, 255, 255, 0.05);
+}
+.bpm-dial__center {
+  gap: 3px;
+}
+.bpm-dial__val {
+  font-variant-numeric: tabular-nums;
+  color: var(--cyan-hi);
+  text-shadow: var(--text-glow-cyan);
+}
+.bpm-dial[data-fine='true'] .bpm-dial__val {
+  color: var(--amber-hi);
+  text-shadow: 0 0 18px rgba(255, 174, 26, 0.45);
+}
+.bpm-dial__sub {
+  color: var(--ink-ghost);
+  letter-spacing: 0.16em;
+}
+.bpm-dial__zoom {
+  position: absolute;
+  top: 6px;
+  right: 8px;
+  padding: 2px 6px;
+  border-radius: var(--r-xs);
+  border: 1px solid var(--hair);
+  font-family: var(--font-label);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-ghost);
+  transition: color var(--t-base) linear, border-color var(--t-base) linear, box-shadow var(--t-base) var(--ease-out);
+}
+.bpm-dial__zoom[data-on='true'] {
+  color: var(--amber-hi);
+  border-color: rgba(255, 174, 26, 0.45);
+  box-shadow: var(--glow-amber);
+}
+
+/* ── Status ticker ───────────────────────────────────────────────────────
+   Fewer segments as the viewport narrows, so it stays readable at 390 px
+   without horizontal scrolling. */
+
+.bpm-ticker {
+  gap: var(--sp-2);
+}
+.bpm-ticker .ticker__seg {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+@media (max-width: 900px) {
+  .bpm-ticker__wide {
+    display: none;
+  }
+}
+@media (max-width: 560px) {
+  .bpm-ticker {
+    gap: 6px;
+    padding: 0 var(--sp-2);
+  }
+}
+@media (max-width: 430px) {
+  .bpm-ticker {
+    gap: 5px;
+    font-size: 8.4px;
+    letter-spacing: 0.06em;
+  }
+}
+
 .bpm-cfgrow {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
@@ -1107,10 +1584,6 @@
   }
   .bpm-reveal__delta {
     grid-column: 1 / -1;
-    flex-direction: row;
-    align-items: center;
-    gap: var(--sp-3);
-    flex-wrap: wrap;
   }
 }
 
@@ -1141,14 +1614,22 @@
   .bpm-transport {
     gap: var(--sp-2);
   }
-  .bpm-transport__meters {
-    order: 3;
+  .bpm-transport__times {
+    width: 100%;
+    justify-content: space-between;
+    gap: var(--sp-2);
+  }
+  .bpm-page {
+    --bpm-time-w: 0;
+  }
+  .bpm-time {
+    flex: 1 1 0;
   }
   .bpm-reveal__head {
     grid-template-columns: 1fr;
   }
   .bpm-history__row {
-    grid-template-columns: 22px 1fr 14px 1fr 1fr 1fr;
+    grid-template-columns: 20px minmax(0, 1fr) 12px minmax(0, 1fr) minmax(0, 1fr) minmax(0, 1fr);
     font-size: 9.5px;
   }
   .bpm-tap {
@@ -1157,6 +1638,25 @@
   }
   .bpm-stage__scan {
     display: none;
+  }
+  .bpm-actions {
+    gap: var(--sp-2);
+  }
+  .bpm-actions__key {
+    margin-left: 0;
+    text-align: left;
+    flex: 1 1 100%;
+  }
+}
+
+@media (max-width: 430px) {
+  .bpm-history__row {
+    gap: 2px;
+    padding: 4px 4px;
+    font-size: 9px;
+  }
+  .bpm-wheelwell__gate {
+    letter-spacing: 0.12em;
   }
 }
 
@@ -1188,6 +1688,20 @@
 
 
 @media (max-width: 900px), (orientation: portrait) and (max-width: 1024px) {
+  /* The grid stacks: give the rows back to the flow and put the ticker last,
+     so it is the footer of the module rather than a strip stranded under the
+     first column. */
+  .pagegrid.bpm-page {
+    grid-template-rows: none;
+    grid-auto-rows: auto;
+  }
+  .pagegrid.bpm-page > .pagegrid__main,
+  .pagegrid.bpm-page > .pagegrid__side {
+    order: 0;
+  }
+  .pagegrid.bpm-page > .ticker {
+    order: 1;
+  }
   .bpm-stage,
   .bpm-page .panel,
   .bpm-page .panel > * {

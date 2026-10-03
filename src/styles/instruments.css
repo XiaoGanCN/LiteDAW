@@ -598,11 +598,32 @@
   background: linear-gradient(180deg, transparent, rgba(0, 0, 0, 0.25));
 }
 
+/* The read state and the edit state must occupy the SAME box. They previously
+   differed (a 46px min-width span swapped for a 74px input), so every numeric
+   field in the app visibly jumped in width the moment it was focused. Both
+   states now share one fixed width and one content box. */
+.numdrag__val,
 .numdrag__input {
-  width: 74px;
-  height: 26px;
+  width: 64px;
+  min-width: 64px;
+  flex: 0 0 auto;
   text-align: right;
+  padding: 0 8px;
+}
+
+.numdrag__input {
+  height: 26px;
   border: 0;
   background: transparent;
   box-shadow: none;
+}
+
+.numdrag__input:focus {
+  outline: none;
+}
+
+/* Reserve the caret's width so the digits do not shift when editing starts. */
+.numdrag__val {
+  padding-top: 6px;
+  padding-bottom: 6px;
 }

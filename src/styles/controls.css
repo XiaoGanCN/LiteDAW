@@ -773,6 +773,10 @@ select.input option {
 }
 .meter--vert .meter__fill {
   transform-origin: center bottom;
+  /* A vertical meter fills upward, so its scale has to run bottom→top: green at
+     the floor, amber in the middle, red at the ceiling. Reusing the horizontal
+     gradient put the red zone along the right-hand edge instead of the top. */
+  background: linear-gradient(0deg, var(--green-lo), var(--green) 42%, var(--amber) 76%, var(--red-hi) 100%);
 }
 .meter__scale {
   position: absolute;
@@ -929,32 +933,45 @@ select.input option {
 
 .tip {
   position: relative;
+  display: inline-flex;
 }
+/* Positioned in the viewport by <Tip>, never by the trigger's stacking
+   context, so it cannot be painted under a banner or run off an edge. */
 .tip__body {
-  position: absolute;
-  bottom: calc(100% + 8px);
-  left: 50%;
-  transform: translate3d(-50%, 4px, 0);
-  z-index: 960;
+  position: fixed;
+  z-index: 1400;
+  transform: translate3d(-50%, 0, 0);
+  max-width: min(260px, 78vw);
   padding: 5px 9px;
   border-radius: var(--r-sm);
-  background: rgba(10, 14, 17, 0.96);
+  background: rgba(10, 14, 17, 0.97);
   border: 1px solid var(--hair-2);
-  box-shadow: var(--sh-2);
+  box-shadow: var(--sh-3);
   font-family: var(--font-label);
   font-size: var(--fs-tiny);
   font-weight: 600;
   letter-spacing: 0.1em;
   text-transform: uppercase;
   color: var(--alu-200);
-  white-space: nowrap;
-  opacity: 0;
+  text-align: center;
+  line-height: 1.35;
+  white-space: normal;
   pointer-events: none;
-  transition: opacity var(--t-base) var(--ease-out), transform var(--t-base) var(--ease-out);
+  animation: tip-in var(--t-fast) var(--ease-out);
 }
-.tip:hover .tip__body {
-  opacity: 1;
+.tip[data-above='false'] .tip__body {
   transform: translate3d(-50%, 0, 0);
+}
+.tip[data-above='true'] .tip__body {
+  transform: translate3d(-50%, -100%, 0);
+}
+@keyframes tip-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 /* ══════════════════════════════════════════════════════════════════════════

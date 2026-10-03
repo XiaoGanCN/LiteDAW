@@ -12,13 +12,26 @@ import { Btn, Chip, Divider, Empty, Led, Panel, Readout, ToggleRow, useToast } f
 import { CHORD_LABELS, chordName, midiName, pitchClassName } from '../../audio/dsp';
 import { NotePlayer, type InstrumentId } from '../../audio/synth';
 import { engine } from '../../audio/engine';
-import { gradeAnswer, usePitch, type Attempt, type Question } from '../../state/pitch';
+import { gradeAnswer, scaleConflicts, usePitch, type Attempt, type Question } from '../../state/pitch';
 import { ConfigPanel } from './ConfigPanel';
 import { ScopeStrip } from './ScopeStrip';
 import { SourcesPanel } from './SourcesPanel';
 import { WeaknessPanel } from './WeaknessPanel';
 import { QuestionScheduler, type PlaybackInfo } from './playback';
-import { PC_NAMES, allowedPcSet, boundsOf, hz, intervalFormula, midiForPc, ms as fmtMs, pct } from './shared';
+import {
+  PC_NAMES,
+  allowedPcSet,
+  answerPcSet,
+  boundsOf,
+  hz,
+  intervalFormula,
+  maxChordSize,
+  midiForPc,
+  ms as fmtMs,
+  pct,
+  sizeLabel,
+  sizeName,
+} from './shared';
 import './pitch.css';
 
 const AUTO_MS = 3000;
@@ -72,7 +85,6 @@ export function PitchPage() {
   const preview = useRef<number | null>(null);
   const glide = useRef(false);
   const downAt = useRef<{ x: number; y: number } | null>(null);
-  const dialDown = useRef(false);
   const advanceGuard = useRef(0);
 
   const { low, high } = boundsOf(cfg);
@@ -181,6 +193,14 @@ export function PitchPage() {
 
   const drill = useCallback(
     (pair: [number, number]) => {
+      const cur = usePitch.getState().cfg.focusPair;
+      /* DRILL is a toggle: clicking the live pair ends the drill instead of
+         silently re-arming the same one. */
+      if (cur && cur[0] === pair[0] && cur[1] === pair[1]) {
+        setCfg('focusPair', null);
+        toast(`Drill off — ${PC_NAMES[pair[0]]} ↔ ${PC_NAMES[pair[1]]} released`, 'info');
+        return;
+      }
       setCfg('focusPair', pair);
       void startNew();
       toast(`Drilling ${PC_NAMES[pair[0]]} ↔ ${PC_NAMES[pair[1]]}`, 'warn');
@@ -223,8 +243,15 @@ export function PitchPage() {
 
   /* ── Answer surface handlers ────────────────────────────────────────── */
 
+  /**
+   * Key-bed audition. Off by default (`cfg.auditionOnPick`): the question is
+   * the only reference a pitch trainer may give away, so picking a key is
+   * silent unless the player asks for audible confirmation. A release is
+   * always honoured so a note held across a switch can never stick.
+   */
   const audition = useCallback(
     (midi: number, down: boolean) => {
+      if (down && !usePitch.getState().cfg.auditionOnPick) return;
       void (async () => {
         const p = await getPlayer();
         if (down) p.play(midi, 0.62, 1.5);
@@ -234,6 +261,11 @@ export function PitchPage() {
     [getPlayer],
   );
 
+  /**
+   * Dial scrub. A deliberate drag across the ring always auditions — it is the
+   * dial's own affordance and it is how the player compares detents. A plain
+   * tap obeys the audition switch (see `previewOnPress` below).
+   */
   const dialPreview = useCallback(
     (pc: number) => {
       const midi = midiForPc(pc, usePitch.getState().cfg);
@@ -251,13 +283,16 @@ export function PitchPage() {
     (midi: number) => {
       const st = usePitch.getState();
       if (!beginAnswering()) return;
+      /* Both answer surfaces gate on the same legal set, so a key that cannot
+         be part of any question can never enter the answer. */
+      if (!answerPcSet(st.cfg).has(pcOf(midi))) return;
       if (st.cfg.mode === 'note') {
         commitGuess([midi]);
         return;
       }
       /* Chord mode: a drag glissando must not spray notes into the set. */
       if (glide.current) return;
-      const size = Math.max(2, st.cfg.chordSize);
+      const size = maxChordSize(st.cfg);
       const cur = guessRef.current;
       if (cur.includes(midi)) commitGuess(cur.filter((m) => m !== midi));
       else if (cur.length < size) commitGuess([...cur, midi].sort((a, b) => a - b));
@@ -267,12 +302,10 @@ export function PitchPage() {
 
   const togglePc = useCallback(
     (pc: number) => {
-      /* The dial commits on release; ignore the press-phase echo. */
-      if (dialDown.current) return;
       const st = usePitch.getState();
       if (!beginAnswering()) return;
-      if (!allowedPcSet(st.cfg).has(pc)) return;
-      const size = st.cfg.mode === 'note' ? 1 : Math.max(2, st.cfg.chordSize);
+      if (!answerPcSet(st.cfg).has(pc)) return;
+      const size = st.cfg.mode === 'note' ? 1 : maxChordSize(st.cfg);
       const cur = guessRef.current;
       const has = cur.some((m) => pcOf(m) === pc);
       if (has) {
@@ -377,6 +410,7 @@ export function PitchPage() {
   }, [stagePhase, question, guess, targetPcs]);
 
   const allowSet = useMemo(() => allowedPcSet(cfg), [cfg]);
+  const answerSet = useMemo(() => answerPcSet(cfg), [cfg]);
 
   const dialItems = useMemo<DialItem<number>[]>(() => {
     const reveal = stagePhase === 'revealed' && !!question;
@@ -387,16 +421,18 @@ export function PitchPage() {
         const isGuess = guessPcs.has(pc);
         sub = isTarget ? (isGuess ? '✓' : 'miss') : isGuess ? '✗' : undefined;
       } else if (cfg.useScale) {
-        sub = pc === ((cfg.scaleRoot % 12) + 12) % 12 ? 'R' : allowSet.has(pc) ? '·' : 'off';
+        sub = pc === ((cfg.scaleRoot % 12) + 12) % 12 ? 'R' : answerSet.has(pc) ? '·' : 'off';
       }
       return {
         value: pc,
         label,
         sub,
-        muted: !reveal && cfg.mode === 'note' && cfg.useScale && !allowSet.has(pc),
+        /* Outside the legal answer set in either mode — a tone no question can
+           contain and the generator will never ask for. */
+        muted: !reveal && !answerSet.has(pc),
       };
     });
-  }, [cfg.mode, cfg.scaleRoot, cfg.useScale, allowSet, stagePhase, question, targetPcs, guessPcs]);
+  }, [cfg.scaleRoot, cfg.useScale, answerSet, stagePhase, question, targetPcs, guessPcs]);
 
   const dialValues = useMemo(() => {
     if (stagePhase === 'revealed' && question) {
@@ -415,333 +451,362 @@ export function PitchPage() {
   /* ── Render ─────────────────────────────────────────────────────────── */
 
   return (
-    <div className="pagegrid pt">
-      <div className="pagegrid__main">
-        <Panel
-          className="pt-stage"
-          variant="alu"
-          icon="pitch"
-          title="Pitch Trainer"
-          tag={cfg.mode === 'note' ? `NOTE · ${cfg.playStyle.toUpperCase()}` : `CHORD ${cfg.chordSize} · ${cfg.playStyle.toUpperCase()}`}
-          actions={
-            <div className="row pt-stage__tags">
-              {cfg.focusPair ? (
-                <Chip tone="amber" icon="target">
-                  {PC_NAMES[cfg.focusPair[0]]}↔{PC_NAMES[cfg.focusPair[1]]}
-                </Chip>
-              ) : null}
-              {question?.drilled ? <Chip tone="red" icon="trend">{question.drillLabel ?? 'DRILL'}</Chip> : null}
-            </div>
-          }
-        >
-          <div className="pt-shell" data-phase={stagePhase}>
-            <span className="pt-scan" aria-hidden="true" />
-
-            {/* status strip */}
-            <div className="pt-bar">
-              <Led
-                on={busy || phase === 'answering' || phase === 'revealed'}
-                color={busy ? 'cyan' : stagePhase === 'revealed' ? (lastResult?.correct ? 'green' : 'red') : 'amber'}
-                pulse={busy}
-              />
-              <span className="pt-bar__state">
-                {stagePhase === 'idle'
-                  ? 'STANDBY'
-                  : busy
-                    ? 'PLAYING'
-                    : stagePhase === 'answering'
-                      ? 'YOUR ANSWER'
-                      : lastResult?.correct
-                        ? 'CORRECT'
-                        : 'MISSED'}
-              </span>
-              {play ? (
-                <Chip tone="cyan" icon="loop">
-                  {play.passes > 1 ? `REPLAY ${play.pass}/${play.passes}` : 'PLAYING'}
-                </Chip>
-              ) : null}
-              {question ? (
-                <span className="pt-bar__q t-micro" title={`Question #${question.id}`}>
-                  #{question.id} · {voice}
-                </span>
-              ) : null}
-              <span className="panel__spacer" />
-              <Readout
-                value={stagePhase === 'answering' ? fmtMs(elapsed) : lastResult && stagePhase === 'revealed' ? fmtMs(attempts[attempts.length - 1]?.ms ?? 0) : '—'}
-                unit="timer"
-                size="sm"
-                tone={stagePhase === 'answering' ? 'cyan' : 'plain'}
-              />
-            </div>
-
-            {/* transport */}
-            <div className="row row--wrap pt-transport">
-              <Btn
-                variant={primaryTransport ? 'primary' : 'default'}
-                size="lg"
-                icon={stagePhase === 'revealed' || stagePhase === 'idle' ? 'play' : 'forward'}
-                onClick={() => void startNew()}
-              >
-                {stagePhase === 'idle' ? 'Play' : stagePhase === 'revealed' ? 'Next' : 'New'}
-              </Btn>
-              <Btn
-                size="lg"
-                icon="loop"
-                variant="alu"
-                disabled={!question}
-                onClick={() => replay(usePitch.getState().question)}
-                title="Replay this question"
-              >
-                Replay
-              </Btn>
-              <Btn
-                size="lg"
-                icon="rewind"
-                variant="alu"
-                disabled={!previous}
-                onClick={() => replay(usePitch.getState().previous)}
-                title="A/B — sound the previous question again"
-              >
-                A/B
-              </Btn>
-              {busy ? (
-                <Btn size="lg" icon="forward" variant="ghost" onClick={skip} title="Stop playback and answer now">
-                  Skip
-                </Btn>
-              ) : null}
-              <span className="panel__spacer" />
-              <button
-                type="button"
-                className="pt-auto"
-                data-on={auto}
-                aria-pressed={auto}
-                onClick={() => setAuto((v) => !v)}
-                title="Advance automatically after the reveal"
-              >
-                <Led on={auto} color="cyan" size="sm" />
-                AUTO
-              </button>
-            </div>
-
-            {/* answer surface */}
-            <div className="pt-surface" data-mode={cfg.answerInput}>
-              {!question ? (
-                <Empty icon="headphones">
-                  Press PLAY — a {cfg.mode === 'note' ? 'single note' : `${cfg.chordSize}-note chord`} will sound
-                </Empty>
-              ) : cfg.answerInput === 'piano' ? (
-                <div
-                  className="pt-keys"
-                  onPointerDownCapture={(e) => {
-                    downAt.current = { x: e.clientX, y: e.clientY };
-                    glide.current = false;
-                  }}
-                  onPointerMoveCapture={(e) => {
-                    const d = downAt.current;
-                    if (!d) return;
-                    if (Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) > 9) glide.current = true;
-                  }}
-                  onPointerUpCapture={() => {
-                    downAt.current = null;
-                  }}
-                  onPointerCancelCapture={() => {
-                    downAt.current = null;
-                  }}
-                >
-                  <PianoKeyboard
-                    lowMidi={low}
-                    highMidi={high}
-                    states={keyStates}
-                    onPick={pickPiano}
-                    onAudition={audition}
-                    labelMode="c"
-                    height={172}
-                    disabled={stagePhase === 'revealed'}
-                  />
-                </div>
-              ) : (
-                <div
-                  className="pt-dialwrap"
-                  data-phase={stagePhase}
-                  onPointerDownCapture={() => {
-                    dialDown.current = true;
-                  }}
-                  onPointerUpCapture={() => {
-                    dialDown.current = false;
-                  }}
-                  onPointerCancelCapture={() => {
-                    dialDown.current = false;
-                  }}
-                >
-                  <DialPicker<number>
-                    items={dialItems}
-                    mode={cfg.mode === 'note' ? 'single' : 'multi'}
-                    value={guessPcs.size ? [...guessPcs][0] : undefined}
-                    onChange={pickDial}
-                    values={dialValues}
-                    onToggle={togglePc}
-                    onPreview={dialPreview}
-                    size={268}
-                    label={cfg.mode === 'note' ? 'PITCH CLASS' : `CHORD TONES ${guess.length}/${cfg.chordSize}`}
-                    accent={stagePhase === 'revealed' ? (lastResult?.correct ? 'var(--green)' : 'var(--red-hi)') : 'var(--cyan)'}
-                    disabled={stagePhase === 'revealed'}
-                  />
-                  <p className="pt-dialhint t-micro">
-                    Drag the head around the ring — every detent auditions · release to commit
-                  </p>
-                </div>
-              )}
-            </div>
-
-            {/* selection + actions */}
-            <div className="pt-answer">
-              <div className="pt-picked">
-                <span className="t-micro">{cfg.mode === 'note' ? 'Selected' : `Chord tones ${guess.length}/${cfg.chordSize}`}</span>
-                <div className="row row--wrap pt-chips">
-                  {guess.length === 0 ? (
-                    <span className="pt-muted t-micro">nothing picked</span>
-                  ) : (
-                    guess.map((m) => (
-                      <span key={m} className="pt-pick" data-pc={pcOf(m)}>
-                        {midiName(m)}
-                      </span>
-                    ))
-                  )}
-                </div>
+    <div className="pt-page">
+      <div className="pagegrid pt">
+        <div className="pagegrid__main">
+          <Panel
+            className="pt-stage"
+            variant="alu"
+            icon="pitch"
+            title="Pitch Trainer"
+            tag={cfg.mode === 'note' ? `NOTE · ${cfg.playStyle.toUpperCase()}` : `CHORD ${sizeLabel(cfg.chordSizes)} · ${cfg.playStyle.toUpperCase()}`}
+            actions={
+              <div className="row pt-stage__tags">
+                {allowSet.size < 12 ? (
+                  <Chip tone="cyan" icon="grid">
+                    POOL {allowSet.size}/12
+                  </Chip>
+                ) : null}
+                {scaleConflicts(cfg) ? (
+                  <Chip tone="amber" icon="alert">
+                    SCALE DROPPED
+                  </Chip>
+                ) : null}
+                {cfg.focusPair ? (
+                  <Chip tone="amber" icon="target">
+                    {PC_NAMES[cfg.focusPair[0]]}↔{PC_NAMES[cfg.focusPair[1]]}
+                  </Chip>
+                ) : null}
+                {question?.drilled ? <Chip tone="red" icon="trend">{question.drillLabel ?? 'DRILL'}</Chip> : null}
               </div>
-              <div className="row pt-actions">
+            }
+          >
+            <div className="pt-shell" data-phase={stagePhase}>
+              <span className="pt-scan" aria-hidden="true" />
+
+              {/* status strip */}
+              <div className="pt-bar">
+                <Led
+                  on={busy || phase === 'answering' || phase === 'revealed'}
+                  color={busy ? 'cyan' : stagePhase === 'revealed' ? (lastResult?.correct ? 'green' : 'red') : 'amber'}
+                  pulse={busy}
+                />
+                <span className="pt-bar__state">
+                  {stagePhase === 'idle'
+                    ? 'STANDBY'
+                    : busy
+                      ? 'PLAYING'
+                      : stagePhase === 'answering'
+                        ? 'YOUR ANSWER'
+                        : lastResult?.correct
+                          ? 'CORRECT'
+                          : 'MISSED'}
+                </span>
+                {play ? (
+                  <Chip tone="cyan" icon="loop">
+                    {play.passes > 1 ? `REPLAY ${play.pass}/${play.passes}` : 'PLAYING'}
+                  </Chip>
+                ) : null}
+                {question ? (
+                  /* Diagnostic detail: it yields to the state word and the timer
+                     on a narrow instrument instead of pushing them out. */
+                  <span className="pt-bar__q t-micro hide-xs" title={`Question #${question.id}`}>
+                    #{question.id} · {voice}
+                  </span>
+                ) : null}
+                <span className="panel__spacer" />
+                <Readout
+                  value={stagePhase === 'answering' ? fmtMs(elapsed) : lastResult && stagePhase === 'revealed' ? fmtMs(attempts[attempts.length - 1]?.ms ?? 0) : '—'}
+                  unit="timer"
+                  size="sm"
+                  tone={stagePhase === 'answering' ? 'cyan' : 'plain'}
+                />
+              </div>
+
+              {/* transport */}
+              <div className="row row--wrap pt-transport">
                 <Btn
-                  variant="ghost"
-                  icon="close"
-                  disabled={!guess.length || stagePhase === 'revealed'}
-                  onClick={() => commitGuess([])}
-                  title="Clear the selection"
+                  variant={primaryTransport ? 'primary' : 'default'}
+                  size="lg"
+                  icon={stagePhase === 'revealed' || stagePhase === 'idle' ? 'play' : 'forward'}
+                  onClick={() => void startNew()}
                 >
-                  Clear
+                  {stagePhase === 'idle' ? 'Play' : stagePhase === 'revealed' ? 'Next' : 'New'}
                 </Btn>
-                {stagePhase === 'answering' ? (
-                  <Btn variant="primary" size="lg" icon="check" disabled={!guess.length} onClick={submit}>
-                    Submit
-                  </Btn>
-                ) : stagePhase === 'revealed' && !showAnswer ? (
-                  <Btn variant="primary" size="lg" icon="eye" onClick={reveal}>
-                    Reveal
+                <Btn
+                  size="lg"
+                  icon="loop"
+                  variant="alu"
+                  disabled={!question}
+                  onClick={() => replay(usePitch.getState().question)}
+                  title="Replay this question"
+                >
+                  Replay
+                </Btn>
+                <Btn
+                  size="lg"
+                  icon="rewind"
+                  variant="alu"
+                  disabled={!previous}
+                  onClick={() => replay(usePitch.getState().previous)}
+                  title="A/B — sound the previous question again"
+                >
+                  A/B
+                </Btn>
+                {busy ? (
+                  <Btn size="lg" icon="forward" variant="ghost" onClick={skip} title="Stop playback and answer now">
+                    Skip
                   </Btn>
                 ) : null}
+                <span className="panel__spacer" />
+                <button
+                  type="button"
+                  className="pt-auto"
+                  data-on={auto}
+                  aria-pressed={auto}
+                  onClick={() => setAuto((v) => !v)}
+                  title="Advance automatically after the reveal"
+                >
+                  <Led on={auto} color="cyan" size="sm" />
+                  AUTO
+                </button>
               </div>
-            </div>
 
-            {countdown > 0 ? (
-              <span className="pt-cd" aria-hidden="true">
-                <i style={{ transform: `scaleX(${1 - countdown})` }} />
-              </span>
-            ) : null}
-
-            {/* reveal */}
-            {stagePhase === 'revealed' && question ? (
-              <div className="pt-reveal" data-correct={lastResult?.correct || undefined}>
-                {showAnswer ? (
-                  <>
-                    <div className="pt-reveal__row" style={stag(0)}>
-                      <span className="t-micro">Target</span>
-                      <span className="pt-reveal__name">
-                        {question.kind === 'note'
-                          ? midiName(question.midi)
-                          : chordName(question.midi, question.quality ?? 'maj')}
-                      </span>
-                      <span className="pt-reveal__meta">
-                        {question.kind === 'note'
-                          ? `${hz(question.midi)} Hz · MIDI ${question.midi}`
-                          : `${question.quality ? CHORD_LABELS[question.quality] : ''} · ${question.midis.map(midiName).join(' ')}`}
-                      </span>
-                    </div>
-                    {question.kind === 'chord' ? (
-                      <div className="pt-reveal__row" style={stag(1)}>
-                        <span className="t-micro">Formula</span>
-                        <span className="pt-formula">{intervalFormula(question.quality)}</span>
-                        <span className="pt-reveal__meta">
-                          root {midiName(question.midi)} · {hz(question.midi)} Hz
-                        </span>
-                      </div>
-                    ) : null}
-                    <div className="pt-reveal__row" style={stag(2)}>
-                      <span className="t-micro">You</span>
-                      <span className="pt-reveal__you">
-                        {attempts[attempts.length - 1]?.answerPcs.map(pitchClassName).join(' · ') || '—'}
-                      </span>
-                      <span className="pt-reveal__meta">{detail}</span>
-                    </div>
-                    <div className="pt-reveal__row" style={stag(3)}>
-                      <span className="t-micro">Score</span>
-                      <span className="pt-reveal__score">
-                        {lastResult ? lastResult.score.toFixed(2) : '0.00'}
-                        <em> / 1.00</em>
-                      </span>
-                      <span className="pt-reveal__meta">
-                        {attempts[attempts.length - 1] ? fmtMs(attempts[attempts.length - 1].ms) : ''}
-                      </span>
-                    </div>
-                  </>
+              {/* answer surface */}
+              <div className="pt-surface" data-mode={cfg.answerInput}>
+                {!question ? (
+                  <Empty icon="headphones">
+                    Press PLAY — a {cfg.mode === 'note' ? 'single note' : `${sizeName(cfg.chordSizes)} chord`} will sound
+                  </Empty>
+                ) : cfg.answerInput === 'piano' ? (
+                  <div
+                    className="pt-keys"
+                    onPointerDownCapture={(e) => {
+                      downAt.current = { x: e.clientX, y: e.clientY };
+                      glide.current = false;
+                    }}
+                    onPointerMoveCapture={(e) => {
+                      const d = downAt.current;
+                      if (!d) return;
+                      if (Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) > 9) glide.current = true;
+                    }}
+                    onPointerUpCapture={() => {
+                      downAt.current = null;
+                    }}
+                    onPointerCancelCapture={() => {
+                      downAt.current = null;
+                    }}
+                  >
+                    <PianoKeyboard
+                      lowMidi={low}
+                      highMidi={high}
+                      states={keyStates}
+                      onPick={pickPiano}
+                      onAudition={audition}
+                      labelMode="c"
+                      height={172}
+                      disabled={stagePhase === 'revealed'}
+                    />
+                  </div>
                 ) : (
-                  <div className="pt-reveal__row" style={stag(0)}>
-                    <span className="t-micro">Verdict</span>
-                    <span className="pt-reveal__name">{lastResult?.correct ? 'CORRECT' : 'NOT THIS TIME'}</span>
-                    <span className="pt-reveal__meta">Instant feedback is off — press REVEAL for the answer.</span>
+                  <div className="pt-dialwrap" data-phase={stagePhase}>
+                    <DialPicker<number>
+                      items={dialItems}
+                      mode={cfg.mode === 'note' ? 'single' : 'multi'}
+                      value={guessPcs.size ? [...guessPcs][0] : undefined}
+                      onChange={pickDial}
+                      values={dialValues}
+                      onToggle={togglePc}
+                      onPreview={dialPreview}
+                      previewOnPress={cfg.auditionOnPick}
+                      size={268}
+                      label={cfg.mode === 'note' ? 'PITCH CLASS' : `CHORD TONES ${guess.length}/${maxChordSize(cfg)}`}
+                      accent={stagePhase === 'revealed' ? (lastResult?.correct ? 'var(--green)' : 'var(--red-hi)') : 'var(--cyan)'}
+                      disabled={stagePhase === 'revealed'}
+                    />
+                    <p className="pt-dialhint t-micro">
+                      Drag the head — every detent auditions as you cross it, release to commit.{' '}
+                      {cfg.auditionOnPick ? 'Taps audition too.' : 'Plain taps stay silent (Audition on pick).'}
+                    </p>
                   </div>
                 )}
-                <PcStrip target={targetPcs} guess={guessPcs} shown={showAnswer} />
               </div>
-            ) : null}
-          </div>
-        </Panel>
 
-        <ScopeStrip live={busy} questionLabel={question ? `#${question.id} ${voice}` : 'no question'} />
+              {/* selection + actions */}
+              <div className="pt-answer">
+                <div className="pt-picked">
+                  <span className="t-micro">{cfg.mode === 'note' ? 'Selected' : `Chord tones ${guess.length}/${maxChordSize(cfg)}`}</span>
+                  <div className="row row--wrap pt-chips">
+                    {guess.length === 0 ? (
+                      <span className="pt-muted t-micro">nothing picked</span>
+                    ) : (
+                      guess.map((m) => (
+                        <span key={m} className="pt-pick" data-pc={pcOf(m)}>
+                          {midiName(m)}
+                        </span>
+                      ))
+                    )}
+                  </div>
+                </div>
+                <div className="row pt-actions">
+                  <Btn
+                    variant="ghost"
+                    icon="close"
+                    disabled={!guess.length || stagePhase === 'revealed'}
+                    onClick={() => commitGuess([])}
+                    title="Clear the selection"
+                  >
+                    Clear
+                  </Btn>
+                  {stagePhase === 'answering' ? (
+                    <Btn variant="primary" size="lg" icon="check" disabled={!guess.length} onClick={submit}>
+                      Submit
+                    </Btn>
+                  ) : stagePhase === 'revealed' && !showAnswer ? (
+                    <Btn variant="primary" size="lg" icon="eye" onClick={reveal}>
+                      Reveal
+                    </Btn>
+                  ) : null}
+                </div>
+              </div>
 
-        <WeaknessPanel onDrill={drill} />
+              {countdown > 0 ? (
+                <span className="pt-cd" aria-hidden="true">
+                  <i style={{ transform: `scaleX(${1 - countdown})` }} />
+                </span>
+              ) : null}
 
-        <div className="ticker pt-ticker">
-          <span className="ticker__seg">
-            <Led size="sm" color={running ? 'green' : 'amber'} />
-            AUDIO {running ? 'LIVE' : 'ARM'}
-          </span>
-          <span className="ticker__seg hide-xs">SR {(engine.sampleRate / 1000).toFixed(1)}K</span>
-          <span className="ticker__seg">Q {question ? `#${question.id}` : '—'}</span>
-          <span className="ticker__seg">T {stagePhase === 'answering' ? fmtMs(elapsed) : '—'}</span>
-          <span className="ticker__seg">N {stats.total}</span>
-          <span className="ticker__seg">ACC {pct(accuracy)}</span>
-          <span className="ticker__seg">SCORE {stats.score.toFixed(1)}</span>
-          <span className="ticker__seg hide-xs">SRC {voice}</span>
-          <span className="ticker__seg hide-xs">
-            FOCUS {cfg.focusPair ? `${PC_NAMES[cfg.focusPair[0]]}↔${PC_NAMES[cfg.focusPair[1]]}` : '—'}
-          </span>
-          <span className="ticker__seg hide-xs">ADAPT {cfg.adaptivity.toFixed(2)}</span>
-          <span className="ticker__seg hide-xs">MODEL {question?.drilled ? 'DRILL' : 'IDLE'}</span>
+              {/* reveal */}
+              {stagePhase === 'revealed' && question ? (
+                <div className="pt-reveal" data-correct={lastResult?.correct || undefined}>
+                  {showAnswer ? (
+                    <>
+                      <div className="pt-reveal__row" style={stag(0)}>
+                        <span className="t-micro">Target</span>
+                        <span className="pt-reveal__name">
+                          {question.kind === 'note'
+                            ? midiName(question.midi)
+                            : chordName(question.midi, question.quality ?? 'maj')}
+                        </span>
+                        <span className="pt-reveal__meta">
+                          {question.kind === 'note'
+                            ? `${hz(question.midi)} Hz · MIDI ${question.midi}`
+                            : `${question.quality ? CHORD_LABELS[question.quality] : ''} · ${question.midis.map(midiName).join(' ')}`}
+                        </span>
+                      </div>
+                      {question.kind === 'chord' ? (
+                        <div className="pt-reveal__row" style={stag(1)}>
+                          <span className="t-micro">Formula</span>
+                          <span className="pt-formula">{intervalFormula(question.quality)}</span>
+                          <span className="pt-reveal__meta">
+                            root {midiName(question.midi)} · {hz(question.midi)} Hz
+                          </span>
+                        </div>
+                      ) : null}
+                      <div className="pt-reveal__row" style={stag(2)}>
+                        <span className="t-micro">You</span>
+                        <span className="pt-reveal__you">
+                          {attempts[attempts.length - 1]?.answerPcs.map(pitchClassName).join(' · ') || '—'}
+                        </span>
+                        <span className="pt-reveal__meta">{detail}</span>
+                      </div>
+                      <div className="pt-reveal__row" style={stag(3)}>
+                        <span className="t-micro">Score</span>
+                        <span className="pt-reveal__score">
+                          {lastResult ? lastResult.score.toFixed(2) : '0.00'}
+                          <em> / 1.00</em>
+                        </span>
+                        <span className="pt-reveal__meta">
+                          {attempts[attempts.length - 1] ? fmtMs(attempts[attempts.length - 1].ms) : ''}
+                        </span>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="pt-reveal__row" style={stag(0)}>
+                      <span className="t-micro">Verdict</span>
+                      <span className="pt-reveal__name">{lastResult?.correct ? 'CORRECT' : 'NOT THIS TIME'}</span>
+                      <span className="pt-reveal__meta">Instant feedback is off — press REVEAL for the answer.</span>
+                    </div>
+                  )}
+                  <PcStrip target={targetPcs} guess={guessPcs} shown={showAnswer} />
+                </div>
+              ) : null}
+            </div>
+          </Panel>
+
+          <ScopeStrip live={busy} questionLabel={question ? `#${question.id} ${voice}` : 'no question'} />
+
+          <WeaknessPanel onDrill={drill} />
+        </div>
+
+        <div className="pagegrid__side">
+          <ConfigPanel />
+          <SourcesPanel onToast={toast} />
+
+          <Panel variant="alu" icon="clock" title="Procedure" tag="HOW TO FLY IT">
+            <ol className="pt-proc">
+              <li>Press PLAY. The question sounds once plus the configured replays.</li>
+              <li>
+                Answer on the {cfg.answerInput === 'piano' ? 'key bed' : 'dial'} — auditioning on pick is{' '}
+                {cfg.auditionOnPick ? 'on' : 'off by default'}, so the trainer cannot hand you the answer.
+              </li>
+              <li>SUBMIT. The true notes go green, your misses go red.</li>
+              <li>Repeat. The generator keeps feeding you the pairs you keep missing.</li>
+            </ol>
+            <Divider />
+            <ToggleRow
+              label="Auto-advance"
+              hint={`Next question ${(AUTO_MS / 1000).toFixed(1)}s after the reveal`}
+              icon="forward"
+              on={auto}
+              onChange={setAuto}
+            />
+            <div className="row pt-keys-help">
+              <span className="t-micro">SPACE replay · ENTER submit/next · A/B previous</span>
+            </div>
+          </Panel>
         </div>
       </div>
 
-      <div className="pagegrid__side">
-        <ConfigPanel />
-        <SourcesPanel onToast={toast} />
-
-        <Panel variant="alu" icon="clock" title="Procedure" tag="HOW TO FLY IT">
-          <ol className="pt-proc">
-            <li>Press PLAY. The question sounds once plus the configured replays.</li>
-            <li>Answer on the {cfg.answerInput === 'piano' ? 'key bed' : 'dial'} — every key auditions so you can compare.</li>
-            <li>SUBMIT. The true notes go green, your misses go red.</li>
-            <li>Repeat. The generator keeps feeding you the pairs you keep missing.</li>
-          </ol>
-          <Divider />
-          <ToggleRow
-            label="Auto-advance"
-            hint={`Next question ${(AUTO_MS / 1000).toFixed(1)}s after the reveal`}
-            icon="forward"
-            on={auto}
-            onChange={setAuto}
-          />
-          <div className="row pt-keys-help">
-            <span className="t-micro">SPACE replay · ENTER submit/next · A/B previous</span>
-          </div>
-        </Panel>
+      {/* Module status line: a footer of the whole module, so it stays attached
+          to the instrument instead of being stranded mid-page once the layout
+          stacks into one column on a phone. Segments carry a priority tier and
+          are dropped from the least important end as the width shrinks. */}
+      <div className="ticker pt-ticker">
+        <span className="ticker__seg" data-pri="0">
+          <Led size="sm" color={running ? 'green' : 'amber'} />
+          AUDIO {running ? 'LIVE' : 'ARM'}
+        </span>
+        <span className="ticker__seg" data-pri="0">
+          Q {question ? `#${question.id}` : '—'}
+        </span>
+        <span className="ticker__seg" data-pri="1">
+          ACC {pct(accuracy)}
+        </span>
+        <span className="ticker__seg" data-pri="1">
+          SCORE {stats.score.toFixed(1)}
+        </span>
+        <span className="ticker__seg" data-pri="2">
+          N {stats.total}
+        </span>
+        <span className="ticker__seg" data-pri="3">
+          T {stagePhase === 'answering' ? fmtMs(elapsed) : '—'}
+        </span>
+        <span className="ticker__seg hide-xs" data-pri="3">
+          POOL {allowSet.size}/12
+        </span>
+        <span className="ticker__seg hide-xs" data-pri="4">
+          SRC {voice}
+        </span>
+        <span className="ticker__seg hide-xs" data-pri="4">
+          FOCUS {cfg.focusPair ? `${PC_NAMES[cfg.focusPair[0]]}↔${PC_NAMES[cfg.focusPair[1]]}` : '—'}
+        </span>
+        <span className="ticker__seg hide-xs" data-pri="4">
+          ADAPT {cfg.adaptivity.toFixed(2)}
+        </span>
+        <span className="ticker__seg hide-xs" data-pri="5">
+          SR {(engine.sampleRate / 1000).toFixed(1)}K
+        </span>
       </div>
     </div>
   );
@@ -767,7 +832,6 @@ function PcStrip({ target, guess, shown }: { target: Set<number>; guess: Set<num
             </span>
           );
         })}
-      </div>
-    </div>
+      </div>    </div>
   );
 }

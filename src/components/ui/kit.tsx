@@ -162,6 +162,48 @@ export function Btn({
   );
 }
 
+/**
+ * Tooltip anchored to its trigger and clamped to the viewport.
+ *
+ * A purely CSS tooltip cannot do this: inside the transport bar it was painted
+ * under the top bar (different stacking context) and near a window edge it ran
+ * off-screen. Measuring the trigger and positioning a fixed-layer bubble keeps
+ * every tooltip legible wherever its trigger happens to sit.
+ */
+export function Tip({ children, label }: { children: ReactNode; label: ReactNode }) {
+  const hostRef = useRef<HTMLSpanElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+
+  const place = () => {
+    const host = hostRef.current;
+    if (!host) return;
+    const r = host.getBoundingClientRect();
+    const half = Math.min(130, Math.max(60, String(label).length * 3.6));
+    const left = Math.max(half + 8, Math.min(window.innerWidth - half - 8, r.left + r.width / 2));
+    const above = r.top > 46;
+    setPos({ left, top: above ? r.top - 8 : r.bottom + 8 });
+    host.dataset.above = above ? 'true' : 'false';
+  };
+
+  return (
+    <span
+      ref={hostRef}
+      className="tip"
+      onPointerEnter={place}
+      onFocus={place}
+      onPointerLeave={() => setPos(null)}
+      onBlur={() => setPos(null)}
+    >
+      {children}
+      {pos && (
+        <span className="tip__body" role="tooltip" style={{ left: pos.left, top: pos.top }}>
+          {label}
+        </span>
+      )}
+    </span>
+  );
+}
+
 export function IconBtn({
   icon,
   label,
@@ -171,10 +213,9 @@ export function IconBtn({
   ...rest
 }: Omit<BtnProps, 'children'> & { label: string }) {
   return (
-    <span className="tip">
+    <Tip label={label}>
       <Btn icon={icon} size={size} variant={variant} active={active} aria-label={label} {...rest} />
-      <span className="tip__body">{label}</span>
-    </span>
+    </Tip>
   );
 }
 

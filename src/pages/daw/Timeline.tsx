@@ -274,36 +274,68 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
             }
           }
 
-          /* fade ramps */
+          /* ── Fades ───────────────────────────────────────────────────
+             The ramp is drawn when set, and BOTH corner grips are always
+             present so there is something to grab to create a fade in the
+             first place. Previously a fade had to exist before it could be
+             hit-tested, which made the feature effectively undiscoverable. */
+          const fadeInPx = Math.min(cw * 0.9, clip.fadeIn * pxPerSec);
+          const fadeOutPx = Math.min(cw * 0.9, clip.fadeOut * pxPerSec);
+          const topY = y + 13;
+
           if (clip.fadeIn > 0) {
-            const fw = Math.min(cw, clip.fadeIn * pxPerSec);
-            ctx.fillStyle = 'rgba(0,0,0,0.55)';
+            ctx.fillStyle = 'rgba(4,7,10,0.62)';
             ctx.beginPath();
-            ctx.moveTo(x, y + 13);
-            ctx.lineTo(x + fw, y + 13);
+            ctx.moveTo(x, topY);
+            ctx.lineTo(x + fadeInPx, topY);
             ctx.lineTo(x, y + ch);
             ctx.closePath();
             ctx.fill();
-            ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+            ctx.strokeStyle = 'rgba(220,235,248,0.75)';
+            ctx.lineWidth = 1.2;
             ctx.beginPath();
             ctx.moveTo(x, y + ch);
-            ctx.lineTo(x + fw, y + 13);
+            ctx.lineTo(x + fadeInPx, topY);
             ctx.stroke();
           }
           if (clip.fadeOut > 0) {
-            const fw = Math.min(cw, clip.fadeOut * pxPerSec);
-            ctx.fillStyle = 'rgba(0,0,0,0.55)';
+            ctx.fillStyle = 'rgba(4,7,10,0.62)';
             ctx.beginPath();
-            ctx.moveTo(x + cw, y + 13);
-            ctx.lineTo(x + cw - fw, y + 13);
+            ctx.moveTo(x + cw, topY);
+            ctx.lineTo(x + cw - fadeOutPx, topY);
             ctx.lineTo(x + cw, y + ch);
             ctx.closePath();
             ctx.fill();
-            ctx.strokeStyle = 'rgba(255,255,255,0.5)';
+            ctx.strokeStyle = 'rgba(220,235,248,0.75)';
+            ctx.lineWidth = 1.2;
             ctx.beginPath();
             ctx.moveTo(x + cw, y + ch);
-            ctx.lineTo(x + cw - fw, y + 13);
+            ctx.lineTo(x + cw - fadeOutPx, topY);
             ctx.stroke();
+          }
+
+          /* Corner grips. A grip is a small machined tab: bright when the
+             pointer is over it, outlined otherwise. */
+          const gripW = 7;
+          const gripH = 9;
+          const drawGrip = (gx: number, active: boolean, filled: boolean) => {
+            ctx.fillStyle = active
+              ? 'rgba(255,255,255,0.95)'
+              : filled
+                ? hexA(color, 0.9)
+                : 'rgba(210,228,242,0.42)';
+            ctx.beginPath();
+            roundRect(ctx, gx - gripW / 2, topY - gripH / 2, gripW, gripH, 1.6);
+            ctx.fill();
+            ctx.strokeStyle = 'rgba(0,0,0,0.7)';
+            ctx.lineWidth = 1;
+            ctx.stroke();
+          };
+          const hoveredFade =
+            hover.clipId === clip.id && (hover.edge === 'fadeIn' || hover.edge === 'fadeOut');
+          if (cw > 22) {
+            drawGrip(x + fadeInPx, hoveredFade && hover.edge === 'fadeIn', clip.fadeIn > 0);
+            drawGrip(x + cw - fadeOutPx, hoveredFade && hover.edge === 'fadeOut', clip.fadeOut > 0);
           }
 
           /* name + badges */
@@ -379,7 +411,10 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, rw, RULER_H);
 
-    /* overview strip */
+    /* ── Minimap ─────────────────────────────────────────────────────────
+       One lane per track, so the strip is a real map of the arrangement and
+       not just a clip soup. It is interactive: pressing or dragging inside it
+       recentres the viewport on that position. */
     const total = Math.max(8, state.projectDuration() * 1.08, 8);
     const ox = (t: number) => (t / total) * rw;
     const og = ctx.createLinearGradient(0, 0, 0, OVERVIEW_H);
@@ -387,24 +422,44 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
     og.addColorStop(1, 'rgba(10,14,18,0.95)');
     ctx.fillStyle = og;
     ctx.fillRect(0, 0, rw, OVERVIEW_H);
-    tracks.forEach((t) => {
+
+    const laneCount = Math.max(1, tracks.length);
+    const laneH = Math.max(1.5, (OVERVIEW_H - 2) / laneCount);
+    tracks.forEach((t, ti) => {
+      const ly = 1 + ti * laneH;
       const list = clipsByTrack.get(t.id) ?? [];
+      if (!list.length) {
+        ctx.fillStyle = 'rgba(255,255,255,0.045)';
+        ctx.fillRect(0, ly, rw, Math.max(0.5, laneH - 0.5));
+        return;
+      }
       list.forEach((c) => {
         const x = ox(c.start);
         const cw = Math.max(1, (c.duration / total) * rw);
-        ctx.fillStyle = hexA(c.color ?? t.color, 0.55);
-        ctx.fillRect(x, 2, cw, OVERVIEW_H - 4);
+        ctx.fillStyle = hexA(c.color ?? t.color, c.muted ? 0.22 : 0.72);
+        ctx.fillRect(x, ly, cw, Math.max(1, laneH - 0.6));
       });
     });
+
     /* viewport window */
     const vx0 = ox(view.scroll);
     const vx1 = ox(view.scroll + rw / pxPerSec);
-    ctx.fillStyle = 'rgba(0,0,0,0.45)';
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
     ctx.fillRect(0, 0, Math.max(0, vx0), OVERVIEW_H);
     ctx.fillRect(vx1, 0, Math.max(0, rw - vx1), OVERVIEW_H);
-    ctx.strokeStyle = 'rgba(31,208,230,0.75)';
+    ctx.fillStyle = 'rgba(31,208,230,0.07)';
+    ctx.fillRect(vx0, 0, Math.max(2, vx1 - vx0), OVERVIEW_H);
+    ctx.strokeStyle = 'rgba(31,208,230,0.8)';
     ctx.lineWidth = 1;
     ctx.strokeRect(vx0 + 0.5, 0.5, Math.max(2, vx1 - vx0) - 1, OVERVIEW_H - 1);
+
+    /* playhead marker on the map */
+    const pos0 = transport.playing ? transport.position() : state.position;
+    const pxm = ox(pos0);
+    if (pxm >= 0 && pxm <= rw) {
+      ctx.fillStyle = '#ff2d47';
+      ctx.fillRect(pxm - 0.5, 0, 1.4, OVERVIEW_H);
+    }
 
     /* time scale */
     ctx.save();
@@ -412,12 +467,19 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
     const beat = 60 / Math.max(20, state.bpm);
     const beatPx = beat * pxPerSec;
     const stepSec = beatPx > 90 ? beat : beatPx > 26 ? beat * 2 : beatPx > 9 ? beat * 4 : beat * 16;
-    const stepPx = stepSec * pxPerSec;
     const t0 = Math.floor(view.scroll / stepSec) * stepSec;
     const t1 = view.scroll + rw / pxPerSec;
 
     ctx.fillStyle = 'rgba(190,215,235,0.06)';
     ctx.fillRect(0, 0, rw, SCALE_H);
+
+    /* Labels are drawn on a fixed pixel budget rather than per tick. Zoomed
+       out, every bar is a bar and the old rule labelled all of them, so the
+       time text overprinted itself into a grey smear. Ticks stay dense (they
+       are cheap and read as a scale); text is rationed. */
+    const MIN_LABEL_PX = 58;
+    ctx.font = '10px "Share Tech Mono", monospace';
+    let lastLabelX = Number.NEGATIVE_INFINITY;
     for (let t = t0; t <= t1; t += stepSec) {
       const x = Math.round(timeToX(t)) + 0.5;
       const barSec = beat * state.numerator;
@@ -427,12 +489,37 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
       ctx.moveTo(x, isBar ? 4 : SCALE_H - 9);
       ctx.lineTo(x, SCALE_H);
       ctx.stroke();
-      if (stepPx > 46 || isBar) {
-        ctx.font = '10px "Share Tech Mono", monospace';
+      if (x - lastLabelX >= MIN_LABEL_PX) {
         ctx.fillStyle = isBar ? 'rgba(255,120,140,0.95)' : 'rgba(160,185,205,0.7)';
         ctx.fillText(fmtTime(t, pxPerSec), x + 3, 13);
+        lastLabelX = x;
       }
     }
+    /* Loop range: a tinted band with two grab tabs, so the range is directly
+       editable rather than only settable by double-clicking for two bars. */
+    if (state.loopOn) {
+      const lx0 = Math.max(0, Math.min(rw, timeToX(state.loopStart)));
+      const lx1 = Math.max(0, Math.min(rw, timeToX(state.loopEnd)));
+      ctx.save();
+      ctx.fillStyle = 'rgba(31,208,230,0.16)';
+      ctx.fillRect(lx0, 0, Math.max(1, lx1 - lx0), SCALE_H);
+      ctx.fillStyle = 'rgba(31,208,230,0.85)';
+      ctx.fillRect(lx0, 0, 1.4, SCALE_H);
+      ctx.fillRect(lx1 - 1.4, 0, 1.4, SCALE_H);
+      /* Grab tabs, deliberately chunky enough for a fingertip. */
+      const tab = (x: number, dir: 1 | -1) => {
+        ctx.beginPath();
+        ctx.moveTo(x, 1);
+        ctx.lineTo(x + dir * 9, 1);
+        ctx.lineTo(x, 11);
+        ctx.closePath();
+        ctx.fill();
+      };
+      if (lx0 > -12) tab(lx0 + 1, 1);
+      if (lx1 < rw + 12) tab(lx1 - 1, -1);
+      ctx.restore();
+    }
+
     /* bar.beat readout line */
     ctx.font = '9px "Share Tech Mono", monospace';
     ctx.fillStyle = 'rgba(127,227,255,0.55)';
@@ -565,9 +652,9 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
         const cw = Math.max(2, c.duration * pxPerSec);
         if (x < cx || x > cx + cw) continue;
         const localY = y - lane.y;
-        if (localY < 14) {
-          const fadeInPx = Math.min(cw * 0.5, c.fadeIn * pxPerSec);
-          const fadeOutPx = Math.min(cw * 0.5, c.fadeOut * pxPerSec);
+        if (localY < 18) {
+          const fadeInPx = Math.min(cw * 0.9, c.fadeIn * pxPerSec);
+          const fadeOutPx = Math.min(cw * 0.9, c.fadeOut * pxPerSec);
           if (Math.abs(x - (cx + fadeInPx)) < FADE_GRAB) return { clip: c, kind: 'fadeIn', lane };
           if (Math.abs(x - (cx + cw - fadeOutPx)) < FADE_GRAB) return { clip: c, kind: 'fadeOut', lane };
         }
@@ -780,8 +867,13 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
       useDaw.setState((s) => ({
         clips: s.clips.map((c) => (patch.has(c.id) ? { ...c, ...patch.get(c.id)! } : c)),
       }));
+      /* Two clips may never occupy the same instant on one track: the clips
+         being dragged win, anything they land on is trimmed back. */
+      useDaw.getState().settleOverlaps(d.origin.map(trackFor), ids);
       return;
     }
+
+    const touchedTracks = [...new Set(d.origin.map((c) => c.trackId))];
 
     if (d.kind === 'trimL') {
       d.origin.forEach((c) => {
@@ -800,6 +892,7 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
           fadeIn: Math.min(c.fadeIn, Math.max(0, c.duration - s2)),
         });
       });
+      useDaw.getState().settleOverlaps(touchedTracks, ids);
       return;
     }
 
@@ -817,6 +910,7 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
           fadeOut: Math.min(c.fadeOut, dur2),
         });
       });
+      useDaw.getState().settleOverlaps(touchedTracks, ids);
       return;
     }
 
@@ -872,8 +966,25 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
     },
     [xToTime],
   );
+  /** Centres the viewport on a position picked in the minimap. */
+  const rulerMode = useRef<'scrub' | 'map' | 'loopL' | 'loopR'>('scrub');
+
+  const navigateTo = (clientX: number) => {
+    const cv = rulerRef.current;
+    if (!cv) return;
+    const rect = cv.getBoundingClientRect();
+    const rw = rect.width || 1;
+    const total = Math.max(8, useDaw.getState().projectDuration() * 1.08, 8);
+    const t = ((clientX - rect.left) / rw) * total;
+    const st = useDaw.getState();
+    st.setView({ scroll: Math.max(0, t - rw / st.view.pxPerSec / 2) });
+  };
+
   const scrubFromEvent = (e: React.PointerEvent, flush = false) => {
-    const t = timeAtClientX(e.clientX);
+    const raw = timeAtClientX(e.clientX);
+    /* The playhead obeys the snap setting too, but must never snap to itself. */
+    const st = useDaw.getState();
+    const t = st.view.snap === 'off' ? raw : st.snapValue(raw, [], { includePlayhead: false });
     const now = performance.now();
     /* Throttle only drives the audio grain; the transport position is committed
        on every event, and `flush` guarantees the release position is not lost. */
@@ -967,12 +1078,54 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
         <canvas
           ref={rulerRef}
           style={{ width: '100%', height: RULER_H, display: 'block', touchAction: 'none', cursor: 'ew-resize' }}
+          className="tl__rulercanvas"
           onPointerDown={(e) => {
             (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+            const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+            const st = useDaw.getState();
+            if (e.clientY - rect.top <= OVERVIEW_H) {
+              rulerMode.current = 'map';
+              navigateTo(e.clientX);
+              return;
+            }
+            /* Loop tabs win over scrubbing: they are small, deliberate targets. */
+            if (st.loopOn) {
+              const lx0 = timeToX(st.loopStart);
+              const lx1 = timeToX(st.loopEnd);
+              const px = e.clientX - rect.left;
+              if (Math.abs(px - lx0) <= 10) {
+                rulerMode.current = 'loopL';
+                st.pushHistory();
+                return;
+              }
+              if (Math.abs(px - lx1) <= 10) {
+                rulerMode.current = 'loopR';
+                st.pushHistory();
+                return;
+              }
+            }
+            rulerMode.current = 'scrub';
             rulerScrubbing.current = true;
             scrubFromEvent(e, true);
           }}
           onPointerMove={(e) => {
+            const st = useDaw.getState();
+            if (rulerMode.current === 'map') {
+              if (e.buttons) navigateTo(e.clientX);
+              return;
+            }
+            if (rulerMode.current === 'loopL' || rulerMode.current === 'loopR') {
+              if (!e.buttons) return;
+              const raw = timeAtClientX(e.clientX);
+              const t = st.view.snap === 'off' ? raw : st.snapValue(raw, [], { includePlayhead: false });
+              const MIN_LOOP = 0.05;
+              if (rulerMode.current === 'loopL') {
+                st.setTransport({ loopStart: Math.max(0, Math.min(t, st.loopEnd - MIN_LOOP)) });
+              } else {
+                st.setTransport({ loopEnd: Math.max(st.loopStart + MIN_LOOP, t) });
+              }
+              return;
+            }
             if (rulerScrubbing.current) scrubFromEvent(e);
           }}
           onPointerUp={(e) => {
@@ -995,7 +1148,7 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
               store.setTransport({ loopOn: false });
             }
           }}
-          title="Drag to scrub · double-click to set a 2-bar loop"
+          title="Minimap: drag to navigate · scale: drag to scrub · double-click for a 2-bar loop"
         />
       </div>
 
@@ -1009,7 +1162,7 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
       >
         <div className="tl__heads tex-carbon">
           {tracks.map((t) => (
-            <TrackHeader key={t.id} track={t} />
+            <TrackHeader key={t.id} track={t} lastIndex={tracks.length - 1} />
           ))}
           <div style={{ flex: '1 1 auto', minHeight: 40 }} />
         </div>
@@ -1067,21 +1220,114 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
    TRACK HEADER
    ══════════════════════════════════════════════════════════════════════════ */
 
-function TrackHeader({ track }: { track: Track }) {
+/** Minimum / maximum strip heights, shared by the drag handle and the inspector. */
+const TRACK_H_MIN = 46;
+const TRACK_H_MAX = 260;
+
+function TrackHeader({ track, lastIndex }: { track: Track; lastIndex: number }) {
   const selected = useDaw((s) => s.view.selectedTrackId === track.id);
   const anySolo = useDaw((s) => s.tracks.some((t) => t.solo));
   const volume = useDaw((s) => s.tracks.find((t) => t.id === track.id)?.volume ?? 0);
+  const trackIndex = useDaw((s) => s.tracks.findIndex((t) => t.id === track.id));
   const update = useDaw((s) => s.updateTrack);
   const audible = anySolo ? track.solo : !track.mute;
+  const [drag, setDrag] = useState<null | 'move' | 'resize'>(null);
+  const [dropAt, setDropAt] = useState<number | null>(null);
+  const gesture = useRef({ y: 0, h: 0, moved: false });
+
+  /** Reorders by walking the sibling headers and finding the pointer's row. */
+  const beginMove = (e: React.PointerEvent) => {
+    e.preventDefault();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    gesture.current = { y: e.clientY, h: track.height, moved: false };
+    setDrag('move');
+  };
+
+  const beginResize = (e: React.PointerEvent) => {
+    e.preventDefault();
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    gesture.current = { y: e.clientY, h: track.height, moved: false };
+    setDrag('resize');
+    useDaw.getState().pushHistory();
+  };
+
+  const onDragMove = (e: React.PointerEvent) => {
+    if (!drag) return;
+    const dy = e.clientY - gesture.current.y;
+    if (Math.abs(dy) > 3) gesture.current.moved = true;
+
+    if (drag === 'resize') {
+      const next = Math.max(TRACK_H_MIN, Math.min(TRACK_H_MAX, gesture.current.h + dy));
+      update(track.id, { height: Math.round(next) });
+      return;
+    }
+
+    /* Drag-to-reorder: find which header row the pointer is over. */
+    const heads = (e.currentTarget as HTMLElement).closest('.tl__heads');
+    if (!heads) return;
+    const rows = [...heads.querySelectorAll<HTMLElement>('.trk')];
+    /* `target` is an INSERTION point in [0, rows.length]. Defaulting it to
+       rows.length - 1 made a drop below the last row resolve back to the
+       original index, so dragging a track to the bottom did nothing. */
+    let target = rows.length;
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i].getBoundingClientRect();
+      if (e.clientY < r.top + r.height / 2) {
+        target = i;
+        break;
+      }
+    }
+    setDropAt(target);
+  };
+
+  const endDrag = () => {
+    if (drag === 'move' && dropAt !== null && gesture.current.moved) {
+      const st = useDaw.getState();
+      const from = st.tracks.findIndex((t) => t.id === track.id);
+      /* `target` is an insertion point in the ORIGINAL order; convert it to a
+         destination index for the lifted row. */
+      if (from >= 0) {
+        let to = dropAt > from ? dropAt - 1 : dropAt;
+        to = Math.max(0, Math.min(st.tracks.length - 1, to));
+        if (to !== from) {
+          st.pushHistory();
+          useDaw.setState((s2) => {
+            const next = s2.tracks.slice();
+            const [row] = next.splice(from, 1);
+            next.splice(to, 0, row);
+            return { tracks: next };
+          });
+        }
+      }
+    }
+    setDrag(null);
+    setDropAt(null);
+  };
 
   return (
     <div
       className="trk"
       data-selected={selected}
+      data-dragging={drag === 'move' || undefined}
+      data-dropbefore={dropAt !== null && dropAt === trackIndex ? 'true' : undefined}
+      data-dropafter={dropAt !== null && dropAt === trackIndex + 1 ? 'true' : undefined}
+      data-last={trackIndex === lastIndex ? 'true' : undefined}
       style={{ ['--trk-color' as string]: track.color, height: track.height }}
       onPointerDown={() => useDaw.getState().setView({ selectedTrackId: track.id })}
     >
       <div className="trk__row">
+        <button
+          type="button"
+          className="trk__grip"
+          title="Drag to reorder this track"
+          aria-label={`Reorder ${track.name}`}
+          onPointerDown={beginMove}
+          onPointerMove={onDragMove}
+          onPointerUp={endDrag}
+          onPointerCancel={endDrag}
+        >
+          <Icon name="menu" size={11} />
+        </button>
         <input
           className="trk__name"
           value={track.name}
@@ -1098,6 +1344,19 @@ function TrackHeader({ track }: { track: Track }) {
           onClick={() => update(track.id, { armed: !track.armed })}
         >
           <Icon name="record" size={10} solid />
+        </button>
+        <button
+          type="button"
+          className="trk__btn"
+          data-kind="del"
+          title="Delete track (⌘/ctrl + Backspace)"
+          aria-label={`Delete ${track.name}`}
+          onClick={() => {
+            const orphans = useDaw.getState().removeTrack(track.id);
+            orphans.forEach((b) => buffers.remove(b, []));
+          }}
+        >
+          <Icon name="close" size={9} />
         </button>
       </div>
       <div className="trk__row">
@@ -1134,7 +1393,7 @@ function TrackHeader({ track }: { track: Track }) {
           <MeterBar trackId={track.id} dim={!audible} />
         </span>
       </div>
-      <div className="trk__row">
+      <div className="trk__row trk__row--last">
         <span className="t-micro" style={{ width: 22 }}>
           LVL
         </span>
@@ -1152,6 +1411,19 @@ function TrackHeader({ track }: { track: Track }) {
           {volume <= 0.001 ? '-∞' : (20 * Math.log10(volume)).toFixed(0)}dB
         </span>
       </div>
+
+      {/* Bottom-edge resize grip. */}
+      <span
+        className="trk__resize"
+        role="separator"
+        aria-label={`Resize ${track.name}`}
+        aria-orientation="horizontal"
+        title="Drag to change track height"
+        onPointerDown={beginResize}
+        onPointerMove={onDragMove}
+        onPointerUp={endDrag}
+        onPointerCancel={endDrag}
+      />
     </div>
   );
 }
@@ -1302,11 +1574,53 @@ function paintSamples(
   const samplesPerPx = sr / pxPerSec;
   const mid = y + h / 2;
   const amp = h / 2 - 1;
+  const cols = Math.min(Math.ceil(w), 8000);
 
   c.strokeStyle = hexA(color, alpha);
   c.lineWidth = 1;
+
+  if (samplesPerPx < 1) {
+    /* ── Beyond one sample per pixel ─────────────────────────────────────
+       Min/max bucketing degenerates here: each column spans less than one
+       sample, so min === max and every "line" collapses to a zero-length
+       segment — which is why the waveform appeared to vanish the moment the
+       user zoomed in far enough. Draw the actual samples instead, connected
+       into the staircase the data really is. */
+    const first = startSample;
+    const last = Math.min(data.length - 1, startSample + Math.ceil(cols * samplesPerPx) + 1);
+    c.beginPath();
+    let started = false;
+    for (let sIdx = Math.max(0, first); sIdx <= last; sIdx++) {
+      const px = x + (sIdx - startSample) / samplesPerPx;
+      const py = mid - Math.max(-1.5, Math.min(1.5, data[sIdx])) * amp;
+      if (!started) {
+        c.moveTo(px, py);
+        started = true;
+      } else {
+        /* sample-and-hold: horizontal run, then the vertical step */
+        c.lineTo(px, py);
+      }
+    }
+    c.stroke();
+
+    /* Sample markers, thinned so they stay legible when they pile up. */
+    const stride = Math.max(1, Math.ceil(9 / Math.max(0.0001, 1 / samplesPerPx)));
+    c.fillStyle = hexA('#7fe3ff', 0.9);
+    for (let sIdx = Math.max(0, first); sIdx <= last; sIdx += stride) {
+      const px = x + (sIdx - startSample) / samplesPerPx;
+      const py = mid - Math.max(-1.5, Math.min(1.5, data[sIdx])) * amp;
+      c.beginPath();
+      c.arc(px, py, 1.7, 0, Math.PI * 2);
+      c.fill();
+    }
+
+    c.fillStyle = 'rgba(127,227,255,0.6)';
+    c.font = '8px "Share Tech Mono", monospace';
+    c.fillText(`SAMPLE VIEW · ${samplesPerPx < 0.02 ? '1:' + Math.round(1 / samplesPerPx) : samplesPerPx.toFixed(2) + ' smp/px'}`, x + 4, y + 9);
+    return;
+  }
+
   c.beginPath();
-  const cols = Math.min(Math.ceil(w), 6000);
   for (let i = 0; i < cols; i++) {
     const s0 = startSample + Math.floor(i * samplesPerPx);
     const s1 = Math.min(data.length, s0 + Math.max(1, Math.floor(samplesPerPx)));
@@ -1323,20 +1637,6 @@ function paintSamples(
     c.lineTo(px, mid - mn * amp);
   }
   c.stroke();
-
-  /* zero crossing dots when a pixel covers less than a sample */
-  if (samplesPerPx < 1) {
-    c.fillStyle = hexA('#7fe3ff', 0.85);
-    const step = Math.max(1, Math.floor(1 / samplesPerPx));
-    for (let i = 0; i < cols; i += step) {
-      const s = startSample + Math.floor(i * samplesPerPx);
-      if (s < 0 || s >= data.length) continue;
-      c.fillRect(x + i - 1, mid - data[s] * amp - 1, 2, 2);
-    }
-    c.fillStyle = 'rgba(127,227,255,0.5)';
-    c.font = '8px "Share Tech Mono", monospace';
-    c.fillText('SAMPLE VIEW', x + 4, y + 9);
-  }
 }
 
 export { RULER_H };

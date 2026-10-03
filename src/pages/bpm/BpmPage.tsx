@@ -32,9 +32,20 @@ import { WheelPicker, type WheelItem } from '../../components/ui/WheelPicker';
 import { Icon } from '../../design/Icon';
 import { engine } from '../../audio/engine';
 import { metronome, type ClickSound } from '../../audio/metronome';
-import { tempoMark, useBpm, type BpmConfig, type BpmMode } from '../../state/bpm';
+import {
+  BPM_CEIL,
+  BPM_FLOOR,
+  BPM_MIN_SPAN,
+  normalizeRange,
+  tempoMark,
+  useBpm,
+  type AnswerSurface,
+  type BpmConfig,
+  type BpmMode,
+} from '../../state/bpm';
 import { BeatVisualiser, type VisPhase } from './BeatVisualiser';
-import { Cap, LiveReadout, MultiToggle, RangeSlider } from './Controls';
+import { BpmDial } from './BpmDial';
+import { Cap, DualRange, MultiToggle, RateSlider, TimeCell } from './Controls';
 import { DiagnosticsPanel } from './Diagnostics';
 import { RevealPanel } from './Reveal';
 import './bpm.css';
@@ -71,19 +82,42 @@ function formatLap(sec: number) {
   return `${m}:${s.toFixed(1).padStart(4, '0')}`;
 }
 
-/** Median inter-tap interval → BPM. The first tap is only the origin. */
+/**
+ * Median inter-tap interval → BPM.
+ *
+ * The first tap is only the origin, so two taps already carry one usable
+ * interval and three carry two. Requiring three *intervals* (the old rule) is
+ * what made "Use taps" feel dead; the caller now reports the degenerate cases
+ * instead of silently doing nothing.
+ */
 function tapBpmFrom(times: number[]): number | null {
-  if (times.length < 3) return null;
+  if (times.length < 2) return null;
   const iv: number[] = [];
   for (let i = 1; i < times.length; i++) {
     const d = times[i] - times[i - 1];
-    if (d >= 120 && d <= 3000) iv.push(d);
+    if (d >= 100 && d <= 4000) iv.push(d);
   }
-  if (iv.length < 2) return null;
+  if (!iv.length) return null;
   iv.sort((a, b) => a - b);
   const mid = iv.length >> 1;
   const med = iv.length % 2 ? iv[mid] : (iv[mid - 1] + iv[mid]) / 2;
-  return 60000 / med;
+  const bpm = 60000 / med;
+  return Number.isFinite(bpm) ? bpm : null;
+}
+
+/** Why a tap run could not be turned into a tempo — shown verbatim. */
+function tapIssue(times: number[]): string {
+  if (times.length < 2) return 'Tap at least twice — the first tap only starts the clock.';
+  const iv: number[] = [];
+  for (let i = 1; i < times.length; i++) iv.push(times[i] - times[i - 1]);
+  const usable = iv.filter((d) => d >= 100 && d <= 4000);
+  if (!usable.length) {
+    const fastest = Math.min(...iv);
+    return iv.every((d) => d < 100)
+      ? `Taps too fast (${Math.round(fastest)} ms apart) — tap the beat, not the subdivision.`
+      : `Taps too slow (${(Math.max(...iv) / 1000).toFixed(1)} s apart) — keep a steady pulse between 15 and 600 BPM.`;
+  }
+  return 'No usable interval in that run — tap a few more beats.';
 }
 
 function applyRoundToMetronome(
@@ -107,11 +141,13 @@ function applyRoundToMetronome(
 
 export function BpmPage() {
   const cfg = useBpm((s) => s.cfg);
+  const ui = useBpm((s) => s.ui);
   const phase = useBpm((s) => s.phase);
   const round = useBpm((s) => s.round);
   const lastRound = useBpm((s) => s.lastRound);
   const stats = useBpm((s) => s.stats);
   const setCfg = useBpm((s) => s.setCfg);
+  const setUi = useBpm((s) => s.setUi);
   const resetConfig = useBpm((s) => s.resetConfig);
   const resetSession = useBpm((s) => s.resetSession);
   const resetModel = useBpm((s) => s.resetModel);
@@ -124,12 +160,15 @@ export function BpmPage() {
   const lo = Math.min(cfg.minBpm, cfg.maxBpm);
   const hi = Math.max(cfg.minBpm, cfg.maxBpm);
   const locked = phase === 'listening' || phase === 'tapping' || phase === 'answering';
+  const visOn = ui.visOn;
+  const surface = ui.surface;
 
   const [answer, setAnswer] = useState(() => Math.round((cfg.minBpm + cfg.maxBpm) / 2));
-  const [visOn, setVisOn] = useState(true);
   const [level, setLevel] = useState(0.75);
   const [taps, setTaps] = useState(0);
+  const [tapCount, setTapCount] = useState(0);
   const [tapBpm, setTapBpm] = useState<number | null>(null);
+  const [tapMsg, setTapMsg] = useState<string | null>(null);
   const [confirm, setConfirm] = useState<null | 'session' | 'model'>(null);
   const [engineState, setEngineState] = useState({ running: engine.running, sr: engine.sampleRate });
 
@@ -147,6 +186,23 @@ export function BpmPage() {
   const sessionStartRef = useRef(0);
   const auditionTimers = useRef<number[]>([]);
   const tapIdRef = useRef<string | null>(null);
+
+  /**
+   * The drum fires `onLive` from its very first paint — before its own
+   * programmatic scroll to the mounted value has landed — so a freshly mounted
+   * wheel reports "the first item in the list" and used to stamp the answer
+   * back down to the bottom of the range. That is why a tap estimate (or an
+   * ↑ keypress) appeared to do nothing: the answer was silently reset to the
+   * range minimum the instant the Answer Entry surface appeared. Only wheel
+   * reports that follow a real user gesture may write the answer.
+   */
+  const wheelArmed = useRef(false);
+  const armWheel = useCallback(() => {
+    wheelArmed.current = true;
+  }, []);
+  useEffect(() => {
+    wheelArmed.current = false;
+  }, [phase, surface]);
 
   useEffect(() => {
     answerRef.current = answer;
@@ -208,7 +264,9 @@ export function BpmPage() {
     tapDeadlineRef.current = 0;
     tapTimesRef.current = [];
     setTaps(0);
+    setTapCount(0);
     setTapBpm(null);
+    setTapMsg(null);
     const loNow = Math.min(st.cfg.minBpm, st.cfg.maxBpm);
     const hiNow = Math.max(st.cfg.minBpm, st.cfg.maxBpm);
     setAnswer((a) => clamp(Math.round(a), loNow, hiNow));
@@ -235,24 +293,50 @@ export function BpmPage() {
     const st = useBpm.getState();
     tapTimesRef.current = [];
     setTaps(0);
+    setTapCount(0);
     setTapBpm(null);
+    setTapMsg(null);
     tapDeadlineRef.current = engine.time + Math.max(2, st.cfg.tapWindow);
     useBpm.setState((s) => (s.round ? { round: { ...s.round, taps: [] } } : {}));
     st.setPhase('tapping');
   }, []);
 
+  /**
+   * Turn the tap run into an answer. `auto` (the tap window expiring) falls
+   * through to manual entry; an explicit press of "Use taps" that cannot be
+   * graded says why and leaves the pad open so the player can keep tapping.
+   */
   const finalizeTaps = useCallback(
     (auto: boolean) => {
       const st = useBpm.getState();
       if (st.phase !== 'tapping') return;
+      const times = tapTimesRef.current;
+      const bpm = tapBpmFrom(times);
+      if (!bpm) {
+        const msg = tapIssue(times);
+        if (auto) {
+          // The window ran out — hand over to the wheel rather than stalling.
+          tapDeadlineRef.current = 0;
+          setTapMsg(null);
+          toast(`${msg} Dial it in by hand.`, 'warn');
+          st.setPhase('answering');
+        } else {
+          setTapMsg(msg);
+          toast(msg, 'warn');
+        }
+        return;
+      }
       tapDeadlineRef.current = 0;
-      const bpm = tapBpmFrom(tapTimesRef.current);
+      setTapMsg(null);
       const a = Math.min(st.cfg.minBpm, st.cfg.maxBpm);
       const b = Math.max(st.cfg.minBpm, st.cfg.maxBpm);
-      if (bpm) setAnswer(clamp(Math.round(bpm), a, b));
+      const graded = clamp(Math.round(bpm), a, b);
+      setAnswer(graded);
       st.setPhase('answering');
-      if (!bpm) toast('Not enough taps — dial the tempo in by hand.', 'warn');
-      else if (auto) toast(`Tap estimate ${bpm.toFixed(1)} BPM — nudge the wheel or lock in.`, 'info');
+      toast(
+        `Tap estimate ${bpm.toFixed(1)} BPM → ${graded} · ${auto ? 'window closed' : 'use taps'}. Nudge it or lock in.`,
+        'info',
+      );
     },
     [toast],
   );
@@ -262,15 +346,19 @@ export function BpmPage() {
     if (st.phase !== 'tapping') return;
     const next = [...tapTimesRef.current, performance.now()].slice(-41);
     tapTimesRef.current = next;
+    setTapCount(next.length);
     setTaps(Math.max(0, next.length - 1));
     setTapBpm(tapBpmFrom(next));
+    setTapMsg(null);
     useBpm.setState((s) => (s.round ? { round: { ...s.round, taps: next } } : {}));
   }, []);
 
   const resetTaps = useCallback(() => {
     tapTimesRef.current = [];
     setTaps(0);
+    setTapCount(0);
     setTapBpm(null);
+    setTapMsg(null);
     useBpm.setState((s) => (s.round ? { round: { ...s.round, taps: [] } } : {}));
   }, []);
 
@@ -312,7 +400,9 @@ export function BpmPage() {
     tapDeadlineRef.current = 0;
     tapTimesRef.current = [];
     setTaps(0);
+    setTapCount(0);
     setTapBpm(null);
+    setTapMsg(null);
     useBpm.setState({ round: null, phase: 'idle' });
   }, []);
 
@@ -455,8 +545,7 @@ export function BpmPage() {
 
   const timing = useMemo(() => {
     const h = stats.history;
-    if (!h.length) return { best: 0, mean: 0 };
-    let best = Number.POSITIVE_INFINITY;
+    if (!h.length) return { best: 0, mean: 0 };    let best = Number.POSITIVE_INFINITY;
     let sum = 0;
     for (const r of h) {
       if (r.ms < best) best = r.ms;
@@ -474,10 +563,25 @@ export function BpmPage() {
     setCfg(key, v);
   };
 
+  /** The tempo range is a pair — one writer, one guard (min stays < max). */
+  const setRange = useCallback(
+    (nextLo: number, nextHi: number) => {
+      if (useBpm.getState().phase !== 'idle' && useBpm.getState().phase !== 'revealed') return;
+      const { minBpm, maxBpm } = normalizeRange(nextLo, nextHi);
+      useBpm.setState((s) => ({ cfg: { ...s.cfg, minBpm, maxBpm } }));
+      setAnswer((a) => clamp(Math.round(a), minBpm, maxBpm));
+    },
+    [],
+  );
+
   /* ══════════════════════════════════════════════════════════════════════
      RENDER
      ══════════════════════════════════════════════════════════════════════ */
 
+  /**
+   * The one red primary of the view. It lives in the Answer Entry panel with
+   * the control it commits; the stage above stays a pure instrument.
+   */
   const primaryBtn = (() => {
     switch (phase) {
       case 'idle':
@@ -489,7 +593,7 @@ export function BpmPage() {
       case 'listening':
         return (
           <Btn
-            variant="ghost"
+            variant="alu"
             size="lg"
             icon="forward"
             onClick={() => (cfg.mode === 'tap' ? enterTapping() : enterAnswering())}
@@ -499,7 +603,13 @@ export function BpmPage() {
         );
       case 'tapping':
         return (
-          <Btn variant="alu" size="lg" icon="check" onClick={() => finalizeTaps(false)} disabled={taps < 2}>
+          <Btn
+            variant={taps >= 1 ? 'primary' : 'alu'}
+            size="lg"
+            icon="check"
+            onClick={() => finalizeTaps(false)}
+            title="Grade the round with the tempo your taps imply"
+          >
             Use taps
           </Btn>
         );
@@ -519,6 +629,26 @@ export function BpmPage() {
         return null;
     }
   })();
+
+  const secondaryBtns = (
+    <>
+      {(phase === 'listening' || phase === 'tapping' || phase === 'answering') && (
+        <Btn variant="ghost" size="sm" icon="close" onClick={abort}>
+          Abort
+        </Btn>
+      )}
+      {phase === 'tapping' && (
+        <Btn variant="ghost" size="sm" icon="dial" onClick={enterAnswering}>
+          Enter by hand
+        </Btn>
+      )}
+      {phase === 'revealed' && (
+        <Btn variant="ghost" size="sm" icon="refresh" onClick={abort}>
+          Standby
+        </Btn>
+      )}
+    </>
+  );
 
   const verdictChip = (() => {
     if (!lastRound || phase !== 'revealed') return null;
@@ -547,9 +677,9 @@ export function BpmPage() {
               <IconBtn
                 icon={visOn ? 'eye' : 'eyeOff'}
                 size="sm"
-                label={visOn ? 'Beat visualiser on' : 'Beat visualiser off — pure listening'}
+                label={visOn ? 'Beat visualiser on — tap to go pure listening' : 'Beat visualiser off — tap to show the pendulum'}
                 variant={visOn ? 'alu' : 'ghost'}
-                onClick={() => setVisOn((v) => !v)}
+                onClick={() => setUi('visOn', !visOn)}
               />
             </div>
           }
@@ -562,6 +692,7 @@ export function BpmPage() {
             endsAt={round?.endsAt ?? 0}
             live={visOn}
             previewBpm={previewBpm}
+            onToggleLive={() => setUi('visOn', !useBpm.getState().ui.visOn)}
           >
             {phase === 'revealed' && lastRound && (
               <div className="bpm-stage__verdict">
@@ -573,24 +704,12 @@ export function BpmPage() {
             {phase === 'answering' && visOn && previewBpm > 0 && (
               <span className="bpm-stage__tag t-micro">Preview · your dial {previewBpm} BPM</span>
             )}
+            {!visOn && <span className="bpm-stage__tag bpm-stage__tag--off t-micro">Visualiser off · pure listening</span>}
           </BeatVisualiser>
 
-          {/* transport */}
+          {/* the stage is a pure instrument: meters + the three lap times.
+              The round actions live in Answer Entry, with the control they commit. */}
           <div className="bpm-transport">
-            <div className="bpm-transport__act">
-              {primaryBtn}
-              {(phase === 'listening' || phase === 'tapping' || phase === 'answering') && (
-                <Btn variant="ghost" size="sm" icon="close" onClick={abort}>
-                  Abort
-                </Btn>
-              )}
-              {phase === 'revealed' && (
-                <Btn variant="ghost" size="sm" icon="refresh" onClick={abort}>
-                  Standby
-                </Btn>
-              )}
-            </div>
-            <div className="panel__spacer" />
             <div className="bpm-transport__meters">
               <span className="bpm-meter">
                 <span className="t-micro">Bus</span>
@@ -605,19 +724,11 @@ export function BpmPage() {
                 <span className="t-micro">Click</span>
               </span>
             </div>
+            <div className="panel__spacer" />
             <div className="bpm-transport__times">
-              <span className="bpm-time">
-                <span className="t-micro">Round</span>
-                <LiveReadout innerRef={roundTimeRef} initial="0:00.0" size="lg" />
-              </span>
-              <span className="bpm-time">
-                <span className="t-micro">Window</span>
-                <LiveReadout innerRef={windowTimeRef} initial="--" tone="amber" />
-              </span>
-              <span className="bpm-time">
-                <span className="t-micro">Session</span>
-                <LiveReadout innerRef={sessionTimeRef} initial="0:00.0" tone="plain" />
-              </span>
+              <TimeCell label="Round" innerRef={roundTimeRef} initial="0:00.0" tone="cyan" title="Wall time since the round started" />
+              <TimeCell label="Window" innerRef={windowTimeRef} initial="--" tone="amber" title="Time left in the reference / tap window" />
+              <TimeCell label="Session" innerRef={sessionTimeRef} initial="0:00.0" tone="plain" title="Wall time since the first round of this session" />
             </div>
           </div>
         </Panel>
@@ -626,17 +737,29 @@ export function BpmPage() {
         <Panel
           title="Answer Entry"
           icon="target"
-          tag={cfg.mode === 'tap' ? 'TAP → WHEEL' : 'WHEEL'}
+          tag={cfg.mode === 'tap' ? `TAP → ${surface.toUpperCase()}` : surface.toUpperCase()}
           actions={
-            <span className="t-micro">
-              {phase === 'answering' ? 'dial & lock in' : phase === 'revealed' ? 'locked' : 'standby'}
-            </span>
+            <div className="bpm-entry__switch">
+              {(phase === 'answering' || phase === 'revealed') && (
+                <Segmented<AnswerSurface>
+                  value={surface}
+                  onChange={(v) => setUi('surface', v)}
+                  options={[
+                    { value: 'wheel', label: 'Wheel', icon: 'dial' },
+                    { value: 'dial', label: 'Dial', icon: 'speed' },
+                  ]}
+                />
+              )}
+              <span className="t-micro">
+                {phase === 'answering' ? 'dial & lock in' : phase === 'revealed' ? 'locked' : 'standby'}
+              </span>
+            </div>
           }
         >
           {phase === 'idle' && (
             <Empty icon="bpm">
               Press START — a tempo plays for {cfg.bars > 0 ? `${cfg.bars} bar${cfg.bars === 1 ? '' : 's'}` : 'as long as you like'}.
-              Name it on the wheel.
+              Name it on the {surface}.
             </Empty>
           )}
 
@@ -682,8 +805,8 @@ export function BpmPage() {
                 <span className="bpm-tap__hint t-micro">or press space</span>
               </button>
               <div className="bpm-tapinfo">
-                <Field label="Taps (origin rejected)" hint="The first tap only starts the clock.">
-                  <Readout value={taps} unit="beats" size="lg" tone={taps >= 2 ? 'green' : 'plain'} />
+                <Field label="Taps" hint="The first tap only starts the clock.">
+                  <Readout value={taps} unit="intervals" size="lg" tone={taps >= 1 ? 'green' : 'plain'} />
                 </Field>
                 <Field label="Running estimate" hint="Median inter-tap interval.">
                   <Readout
@@ -693,30 +816,65 @@ export function BpmPage() {
                     tone={tapBpm ? 'cyan' : 'plain'}
                   />
                 </Field>
-                <div className="row">
-                  <Btn size="sm" variant="ghost" icon="refresh" onClick={resetTaps} disabled={!taps}>
+                <div className="row row--wrap">
+                  <Btn size="sm" variant="ghost" icon="refresh" onClick={resetTaps} disabled={!tapCount}>
                     Reset taps
                   </Btn>
                 </div>
+                <span className="bpm-tapinfo__state t-micro">
+                  {tapMsg
+                    ? tapMsg
+                    : tapBpm
+                      ? `${tapCount} taps · ${taps} usable interval${taps === 1 ? '' : 's'} — press USE TAPS to grade it.`
+                      : `Tap the beat ${Math.max(2, 3 - tapCount)} more time${Math.max(2, 3 - tapCount) === 1 ? '' : 's'} to get an estimate.`}
+                </span>
               </div>
             </div>
           )}
 
           {(phase === 'answering' || phase === 'revealed') && (
-            <div className="bpm-wheelrow">
-              <Well className="bpm-wheelwell">
-                <WheelPicker
-                  items={wheelItems}
-                  value={answer}
-                  onChange={(v) => phase === 'answering' && setAnswer(v)}
-                  onLive={(v) => phase === 'answering' && setAnswer(v)}
-                  itemHeight={30}
-                  visible={5}
-                  width={148}
-                  ariaLabel="Your tempo answer in BPM"
-                  className={phase === 'revealed' ? 'bpm-wheel--locked' : ''}
-                />
-                <span className="bpm-wheelwell__gate t-micro">{phase === 'revealed' ? 'locked' : 'bpm'}</span>
+            <div className="bpm-answer">
+              <Well className="bpm-answer__well bpm-wheelwell">
+                {surface === 'wheel' ? (
+                  <div
+                    className="bpm-wheelarm"
+                    onPointerDownCapture={armWheel}
+                    onKeyDownCapture={armWheel}
+                    onWheelCapture={armWheel}
+                  >
+                    <WheelPicker
+                      items={wheelItems}
+                      value={answer}
+                      onChange={(v) => {
+                        if (phase === 'answering' && wheelArmed.current) setAnswer(v);
+                      }}
+                      onLive={(v) => {
+                        /* Ignore the drum's mount-time paint: it reports item 0
+                           before its own scroll-to-value has landed, which used
+                           to stamp the answer down to the range minimum. */
+                        if (phase === 'answering' && wheelArmed.current) setAnswer(v);
+                      }}
+                      itemHeight={30}
+                      visible={5}
+                      width={148}
+                      ariaLabel="Your tempo answer in BPM"
+                      className={phase === 'revealed' ? 'bpm-wheel--locked' : ''}
+                    />
+                  </div>
+                ) : (
+                  <BpmDial
+                    value={answer}
+                    onChange={(v) => phase === 'answering' && setAnswer(v)}
+                    min={lo}
+                    max={hi}
+                    size={252}
+                    label={phase === 'revealed' ? 'locked' : 'your call'}
+                    sub={`${lo} – ${hi} bpm`}
+                  />
+                )}
+                <span className="bpm-wheelwell__gate t-micro">
+                  {phase === 'revealed' ? 'locked' : surface === 'wheel' ? 'bpm' : 'drag · hold · fine'}
+                </span>
               </Well>
               <div className="bpm-wheelside">
                 <Field label="Your call" hint={`Range ${lo}–${hi} BPM · tolerance ±${cfg.tolerance}`}>
@@ -734,7 +892,9 @@ export function BpmPage() {
                 )}
                 {phase === 'answering' && (
                   <p className="bpm-note t-micro">
-                    Scrub the drum, use ↑ ↓, then LOCK IN. The pendulum previews the tempo you dialled.
+                    {surface === 'wheel'
+                      ? 'Scrub the drum or use ↑ ↓, then LOCK IN. The pendulum previews the tempo you dialled.'
+                      : 'Drag the head around the ring, hold still to zoom in for ±1 BPM, release to commit. The pendulum previews the tempo you dialled.'}
                   </p>
                 )}
                 {phase === 'revealed' && lastRound && (
@@ -746,6 +906,16 @@ export function BpmPage() {
               </div>
             </div>
           )}
+
+          {/* ── The round actions: one red primary, sitting with the control
+                 it commits. Keyboard shortcuts ride the same handlers. ── */}
+          <div className="bpm-actions" data-phase={phase}>
+            <div className="bpm-actions__main">{primaryBtn}</div>
+            <div className="bpm-actions__alt">{secondaryBtns}</div>
+            <span className="bpm-actions__key t-micro">
+              {phase === 'tapping' ? 'space = tap · enter = use taps' : 'space / enter = the primary action'}
+            </span>
+          </div>
         </Panel>
 
         {/* ══ DEBRIEF ══════════════════════════════════════════════════ */}
@@ -763,24 +933,26 @@ export function BpmPage() {
             meanMs={timing.mean}
           />
         </Panel>
-
-        {/* ══ TICKER ═══════════════════════════════════════════════════ */}
-        <div className="ticker">
+        {/* ══ STATUS TICKER ════════════════════════════════════════════
+               Inside the main column: it is the instrument's footer, and as a
+               sibling of the side column it would occupy a grid cell the
+               layout does not have. Segments drop in priority order as the
+               viewport narrows. */}
+        <div className="ticker bpm-ticker">
           <span className="ticker__seg">
             <Led size="sm" color={engineState.running ? 'green' : 'amber'} on />
             {engineState.running ? 'engine live' : 'engine idle'}
           </span>
-          <span className="ticker__seg">SR {(engineState.sr / 1000).toFixed(1)} kHz</span>
+          <span className="ticker__seg bpm-ticker__wide">SR {(engineState.sr / 1000).toFixed(1)} kHz</span>
           <span className="ticker__seg">PHASE {PHASE_LABEL[phase]}</span>
           <span className="ticker__seg">
-            RANGE {lo}–{hi} BPM
+            {lo}–{hi} BPM
           </span>
-          <span className="ticker__seg">MODE {cfg.mode}</span>
+          <span className="ticker__seg bpm-ticker__wide">MODE {cfg.mode}</span>
           <span className="ticker__seg">ROUNDS {stats.rounds}</span>
           <span className="ticker__seg">
             SESSION <b ref={tickerTimeRef}>0:00.0</b>
           </span>
-          <span className="ticker__seg">VIS {visOn ? 'on' : 'off'}</span>
         </div>
       </div>
 
@@ -810,28 +982,42 @@ export function BpmPage() {
 
           <Divider />
 
-          <Field label="Tempo range" icon="speed" hint="The adaptive model segments this span into 12 regions.">
-            <div className="row">
-              <NumDrag
-                value={cfg.minBpm}
-                min={20}
-                max={300}
+          {/* Tempo range is the primary adjustment of this trainer, so it gets
+              a first-class control: a two-thumb slider spanning the whole
+              Drill Configuration panel, with both ends read out numerically. */}
+          <Field
+            label={`Tempo range · ${lo}–${hi} BPM`}
+            icon="speed"
+            hint="Drag either handle. The adaptive model segments this span into 12 regions."
+          >
+            <div className="bpm-range2" data-locked={locked ? 'true' : undefined}>
+              <DualRange
+                low={lo}
+                high={hi}
+                min={BPM_FLOOR}
+                max={BPM_CEIL}
                 step={1}
-                unit="min"
-                width={104}
-                format={(v) => String(Math.round(v))}
-                onChange={(v) => toggleCfg('minBpm', Math.min(v, cfg.maxBpm - 5))}
+                gap={BPM_MIN_SPAN}
+                disabled={locked}
+                ariaLabel="Tempo range"
+                lowLabel={`${lo} BPM minimum`}
+                highLabel={`${hi} BPM maximum`}
+                onChange={setRange}
               />
-              <NumDrag
-                value={cfg.maxBpm}
-                min={20}
-                max={320}
-                step={1}
-                unit="max"
-                width={104}
-                format={(v) => String(Math.round(v))}
-                onChange={(v) => toggleCfg('maxBpm', Math.max(v, cfg.minBpm + 5))}
-              />
+              <div className="bpm-range2__ends">
+                <span className="bpm-range2__end">
+                  <span className="t-micro">Min</span>
+                  <Readout value={lo} unit="bpm" size="sm" tone="cyan" />
+                </span>
+                <span className="bpm-range2__end bpm-range2__end--mid">
+                  <span className="t-micro">Span</span>
+                  <Readout value={hi - lo} unit="bpm" size="sm" tone="plain" />
+                </span>
+                <span className="bpm-range2__end">
+                  <span className="t-micro">Max</span>
+                  <Readout value={hi} unit="bpm" size="sm" tone="amber" />
+                </span>
+              </div>
             </div>
           </Field>
 
@@ -920,7 +1106,7 @@ export function BpmPage() {
             icon="trend"
             hint="Chance that the next tempo is drawn from a region you keep misjudging. 0% = uniform random."
           >
-            <RangeSlider
+            <RateSlider
               ariaLabel="Adaptivity"
               value={cfg.adaptivity}
               min={0}
@@ -947,10 +1133,10 @@ export function BpmPage() {
 
           <ToggleRow
             label="Beat visualiser"
-            hint="Off = pure listening, no pendulum, no lamps."
+            hint="Off = pure listening, no pendulum, no lamps. Off by default."
             icon={visOn ? 'eye' : 'eyeOff'}
             on={visOn}
-            onChange={setVisOn}
+            onChange={(v) => setUi('visOn', v)}
           />
 
           <div className="bpm-levelrow">

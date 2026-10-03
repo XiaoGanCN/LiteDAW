@@ -417,8 +417,18 @@ function WeakRow({
         <Bar value={pair.error} max={1} length="100%" thickness={5} color="var(--red-hi)" />
         <span className="pt-mono">{pct(pair.error)}</span>
       </div>
-      <Btn size="sm" variant={active ? 'primary' : 'default'} icon="target" onClick={onDrill} title="Drill this pair">
-        Drill
+      {/* A toggle, not a one-way switch: the pressed state is amber (the drill
+          colour) so the single red primary action stays with SUBMIT/PLAY. */}
+      <Btn
+        size="sm"
+        className="pt-drill"
+        data-on={active || undefined}
+        aria-pressed={active}
+        icon={active ? 'close' : 'target'}
+        onClick={onDrill}
+        title={active ? 'End this drill and return to the full pool' : `Drill ${PC_NAMES[pair.a]} ↔ ${PC_NAMES[pair.b]}`}
+      >
+        {active ? 'Drill on' : 'Drill'}
       </Btn>
     </li>
   );

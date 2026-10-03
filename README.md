@@ -404,9 +404,11 @@ scripts/                   font vendoring, icon generation
 Three gates, all wired to npm scripts:
 
 ```bash
-npm run typecheck   # tsc --noEmit, strict + noUnusedLocals/Parameters — clean
-npm run build       # vite production build
-npm run smoke       # headless Chrome pass over all three modules
+npm run typecheck     # tsc --noEmit, strict + noUnusedLocals/Parameters — clean
+npm run build         # vite production build
+npm run smoke         # headless Chrome pass over all three modules
+npm run verify:fixes  # 18 behavioural checks for the ear trainers and the shell
+npm run verify:daw    # 20 behavioural checks for the Studio
 ```
 
 `npm run smoke` boots the real production bundle in the locally installed
@@ -422,6 +424,19 @@ asserts there is no horizontal document overflow. Screenshots land in
 | Tempo: start → reference plays → drum the wheel → lock in → debrief | Metronome scheduling, wheel picker, timer, beat visualiser, verdict |
 | Studio: add track → play → import a WAV → select the clip → all four inspector tabs → scopes → settings | Timeline canvas, decode pipeline, clip model, EQ curve, scopes, export bay |
 | Mobile pass at 390×844 | Responsive shell, bottom navigation rail, no clipped instruments |
+
+`npm run verify:daw` covers the Studio specifically, and is the suite that
+proves the routing fix (the instruments read flat until the project mix was
+routed through the shared master) and the timeline's edit semantics:
+
+| Check group | What it asserts |
+| --- | --- |
+| Instruments | The spectrum animates while the Studio plays (27 distinct frames vs 2 when silent) and the transport OUT meter moves |
+| Track header | Reorder grip, delete button, bottom-edge resize, drag-to-reorder actually changing the order, and ⌘/ctrl+Backspace deleting the focused track |
+| Clip placement | A drop adds a clip, a second clip cannot overlap the first (project length grows rather than staying put), and a multi-file drop lays clips in parallel, adding tracks when it runs out of lanes |
+| Snap & navigation | The playhead lands exactly on the grid, the minimap scrolls the viewport, zoom changes scale, and time labels stay sparse when fully zoomed out |
+| Loop & transport | The loop range drags on the ruler and has numeric start/end fields; the playhead can be repositioned while the transport is rolling |
+| Media & health | Clips relink from the IndexedDB media vault after a reload, with no console errors |
 
 The deployed build can be checked the same way, which is what proves the
 sub-path hosting story:

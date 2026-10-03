@@ -14,7 +14,8 @@ import { buffers } from '../../daw/buffers';
 import { decodeAudioFile, isAudioFile } from '../../audio/decode';
 import { dbToGain } from '../../audio/dsp';
 import { normalize as normalizeData } from '../../audio/dsp';
-import { useDaw, ZOOM_MAX, ZOOM_MIN, type SnapMode } from '../../state/daw';
+import { useDaw, ZOOM_MAX, ZOOM_MIN, type Clip, type SnapMode } from '../../state/daw';
+import { allMedia, putMedia, totalBytes as totalMediaBytes } from '../../daw/media';
 import { Timeline } from './Timeline';
 import { Mixer } from './Mixer';
 import { Inspector } from './Inspector';
@@ -31,6 +32,7 @@ export function DawPage() {
   const [recordingArmed, setRecordingArmed] = useState(false);
   const [deck, setDeck] = useState<'mixer' | 'scopes'>('mixer');
   const [timelineH, setTimelineH] = useState(360);
+  const [mediaBytes, setMediaBytes] = useState(0);
   const recStartPos = useRef(0);
 
   const anySolo = s.tracks.some((t) => t.solo);
@@ -113,50 +115,92 @@ export function DawPage() {
      ══════════════════════════════════════════════════════════════════════ */
 
   const importFiles = useCallback(
-    async (files: File[], trackId: string, at: number) => {
+    async (files: File[], trackId: string, at: number, stacked = true) => {
       const audio = files.filter(isAudioFile);
       if (!audio.length) {
         toast('No decodable audio in that drop', 'warn');
         return;
       }
-      const st = useDaw.getState();
-      let target = trackId;
-      let cursor = at;
-      let added = 0;
+      /* Decode everything first so placement can consider the whole batch. */
+      const decodedList: { file: File; decoded: Awaited<ReturnType<typeof decodeAudioFile>> }[] = [];
       for (const file of audio) {
         try {
           // eslint-disable-next-line no-await-in-loop
           const decoded = await decodeAudioFile(file);
-          const rec = buffers.add(decoded.name, decoded.buffer, decoded.source);
-          const track = st.tracks.find((t) => t.id === target) ?? st.tracks[0];
-          if (!track) break;
-          useDaw.getState().addClip({
-            trackId: track.id,
-            bufferId: rec.id,
-            name: decoded.name,
-            start: cursor,
-            offset: 0,
-            duration: decoded.duration,
-            gainDb: 0,
-            fadeIn: 0,
-            fadeOut: 0,
-            muted: false,
-            pitch: 0,
-            speed: 1,
-          });
-          cursor += decoded.duration;
-          added++;
-        } catch (err) {
+          decodedList.push({ file, decoded });
+        } catch {
           toast(`Could not decode ${file.name}`, 'error');
-          void err;
         }
       }
-      if (added) {
-        toast(
-          `${added} clip${added > 1 ? 's' : ''} imported · ${buffers.all().length} source${buffers.all().length > 1 ? 's' : ''} in memory`,
-          'ok',
+      if (!decodedList.length) return;
+
+      /* A multi-file drop lays the clips out in PARALLEL — one per track,
+         starting at the same instant — adding tracks when it runs out, rather
+         than queueing them end to end down a single lane. A single file still
+         lands where it was dropped. */
+      const parallel = stacked && decodedList.length > 1;
+      let tracks = [...useDaw.getState().tracks];
+      const startIndex = Math.max(0, tracks.findIndex((t) => t.id === trackId));
+      const addedTracks: string[] = [];
+      if (parallel) {
+        const needed = startIndex + decodedList.length - tracks.length;
+        for (let i = 0; i < needed; i++) addedTracks.push(useDaw.getState().addTrack().id);
+        tracks = [...useDaw.getState().tracks];
+      }
+
+      let cursor = at;
+      let placed = 0;
+      let persisted = 0;
+      const made: { clip: Clip; file: File }[] = [];
+
+      for (let i = 0; i < decodedList.length; i++) {
+        const { file, decoded } = decodedList[i];
+        const rec = buffers.add(decoded.name, decoded.buffer, decoded.source);
+        const target = parallel
+          ? tracks[Math.min(tracks.length - 1, startIndex + i)]
+          : tracks.find((t) => t.id === trackId) ?? tracks[0];
+        if (!target) break;
+
+        /* Never drop a clip on top of another: find the first free slot. */
+        const start = useDaw.getState().freeSlot(target.id, parallel ? at : cursor, decoded.duration);
+        const clip = useDaw.getState().addClip({
+          trackId: target.id,
+          bufferId: rec.id,
+          name: decoded.name,
+          start,
+          offset: 0,
+          duration: decoded.duration,
+          gainDb: 0,
+          fadeIn: 0,
+          fadeOut: 0,
+          muted: false,
+          pitch: 0,
+          speed: 1,
+        });
+        made.push({ clip, file });
+        if (!parallel) cursor = start + decoded.duration;
+        placed++;
+
+        // Persist the SOURCE file so the clip survives a reload.
+        // eslint-disable-next-line no-await-in-loop
+        const ok = await putMedia({ id: rec.id, name: decoded.name, blob: file, type: file.type || 'audio/wav' });
+        if (ok) persisted++;
+      }
+
+      if (!parallel && made.length) {
+        /* Overlaps can only appear when clips share a lane. */
+        useDaw.getState().settleOverlaps(
+          [...new Set(made.map((m) => m.clip.trackId))],
+          made.map((m) => m.clip.id),
         );
-        setTimelineH((h) => h);
+      }
+
+      if (placed) {
+        const bits = [`${placed} clip${placed > 1 ? 's' : ''} imported`];
+        if (addedTracks.length) bits.push(`${addedTracks.length} track${addedTracks.length > 1 ? 's' : ''} added`);
+        if (persisted < placed) bits.push(`${placed - persisted} too large to persist`);
+        toast(bits.join(' · '), persisted === placed ? 'ok' : 'warn');
+        void totalMediaBytes().then(setMediaBytes);
       }
     },
     [toast],
@@ -167,6 +211,42 @@ export function DawPage() {
   /* ══════════════════════════════════════════════════════════════════════
      RECORDING
      ══════════════════════════════════════════════════════════════════════ */
+
+  /* ── Media restore ─────────────────────────────────────────────────────
+     Rebuilds every persisted source under its ORIGINAL buffer id, so clips
+     saved in the project JSON relink instead of coming back empty. */
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const rows = await allMedia();
+      if (!rows.length || cancelled) return;
+      let restored = 0;
+      for (const row of rows) {
+        if (buffers.has(row.id)) continue;
+        try {
+          const file = new File([row.blob], row.name, { type: row.type || 'audio/wav' });
+          // eslint-disable-next-line no-await-in-loop
+          const decoded = await decodeAudioFile(file);
+          buffers.addWithId(row.id, row.name, decoded.buffer, decoded.source);
+          restored++;
+        } catch {
+          /* skip unreadable media rather than blocking the rest */
+        }
+      }
+      if (cancelled) return;
+      setMediaBytes(await totalMediaBytes());
+      if (restored) {
+        const st = useDaw.getState();
+        /* Drop clips whose media genuinely could not be recovered. */
+        const missing = st.clips.filter((c) => !buffers.has(c.bufferId));
+        if (missing.length) st.removeClips(missing.map((c) => c.id));
+        toast(`${restored} media file${restored > 1 ? 's' : ''} relinked`, 'ok');
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [toast]);
 
   useEffect(() => {
     void Recorder.listDevices().then((d) => {
@@ -246,28 +326,40 @@ export function DawPage() {
     const st = useDaw.getState();
     if (transport.playing) return;
     const ctx = await engine.init();
+    /* Every audible clip under the playhead, on every track. This used to cap
+       the grain count at four, so a busy arrangement scrubbed only its first
+       few lanes — which read as "scrubbing does not work for every track". */
     const hits = st.clips.filter(
       (c) => !c.muted && t >= c.start && t < c.start + c.duration && st.trackAudible(c.trackId),
     );
     if (!hits.length) return;
+
+    /* Route each grain through its own track strip when the transport graph is
+       live, so level, pan and EQ are honoured; otherwise fall back to the bus
+       with the track fader applied manually. */
+    const graph = transport.getGraph();
     const now = ctx.currentTime + 0.005;
     const grain = 0.075;
-    hits.slice(0, 4).forEach((c) => {
+    hits.forEach((c) => {
       const rec = buffers.get(c.bufferId);
       if (!rec) return;
-      const rate = Math.max(0.05, c.speed);
+      const track = st.tracks.find((x) => x.id === c.trackId);
+      const rate = Math.max(0.05, c.speed * (track?.speed ?? 1));
+      const buffer = buffers.pitched(c.bufferId, c.pitch + (track?.pitch ?? 0)) ?? rec.buffer;
+      const off = c.offset + (t - c.start) * rate;
+      if (off >= buffer.duration) return;
+
       const src = ctx.createBufferSource();
-      src.buffer = rec.buffer;
+      src.buffer = buffer;
       src.playbackRate.value = rate;
       const g = ctx.createGain();
-      const amp = dbToGain(c.gainDb) * 0.5;
+      const stripGain = graph ? 1 : (track?.volume ?? 1);
+      const amp = dbToGain(c.gainDb) * stripGain * 0.6;
       g.gain.setValueAtTime(0, now);
       g.gain.linearRampToValueAtTime(amp, now + 0.006);
       g.gain.linearRampToValueAtTime(0, now + grain);
-      src.connect(g).connect(engine.bus('daw'));
-      const off = c.offset + (t - c.start) * rate;
-      if (off >= rec.duration) return;
-      src.start(now, off, Math.min(grain * rate, rec.duration - off));
+      src.connect(g).connect(graph?.strips.get(c.trackId)?.input ?? engine.bus('daw'));
+      src.start(now, off, Math.min(grain * rate, buffer.duration - off));
       src.stop(now + grain + 0.03);
     });
   }, []);
@@ -294,10 +386,38 @@ export function DawPage() {
         case e.key === 'End':
           st.setTransport({ position: st.projectDuration() });
           break;
+        case mod && (e.key === 'Delete' || e.key === 'Backspace'):
+          /* ⌘/ctrl + Backspace always targets the focused TRACK, even with
+             clips selected — the unambiguous "remove this lane" gesture. */
+          if (st.view.selectedTrackId && st.tracks.length > 1) {
+            e.preventDefault();
+            const doomed = st.view.selectedTrackId;
+            const idx = st.tracks.findIndex((t) => t.id === doomed);
+            const orphans = st.removeTrack(doomed);
+            orphans.forEach((b) => buffers.remove(b, []));
+            const next = useDaw.getState().tracks;
+            st.setView({ selectedTrackId: next[Math.max(0, Math.min(next.length - 1, idx))]?.id ?? null });
+            toast('Track deleted', 'ok');
+          }
+          break;
+
         case e.key === 'Delete' || e.key === 'Backspace':
           if (st.selection.length) {
             e.preventDefault();
             st.removeClips(st.selection);
+          } else if (st.view.selectedTrackId && st.tracks.length > 1) {
+            /* With nothing selected on the timeline, Backspace removes the
+               focused track — the fastest route to "get rid of this lane"
+               without hunting for a button. */
+            e.preventDefault();
+            const doomed = st.view.selectedTrackId;
+            const idx = st.tracks.findIndex((t) => t.id === doomed);
+            const orphans = st.removeTrack(doomed);
+            orphans.forEach((b) => buffers.remove(b, []));
+            const next = useDaw.getState().tracks;
+            const fallback = next[Math.max(0, Math.min(next.length - 1, idx))];
+            st.setView({ selectedTrackId: fallback?.id ?? null });
+            toast('Track deleted', 'ok');
           }
           break;
         case mod && e.key.toLowerCase() === 'z' && !e.shiftKey:
@@ -367,15 +487,15 @@ export function DawPage() {
     s.setView({ pxPerSec: Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, (w - 60) / Math.max(0.05, end - start))), scroll: Math.max(0, start - 0.05) });
   };
 
-  const onScrubSeek = useCallback(
-    (t: number) => {
-      useDaw.getState().setTransport({ position: t });
-      if (useDaw.getState().playing) {
-        void startPlayback(t);
-      }
-    },
-    [startPlayback],
-  );
+  /**
+   * Jump the transport. While rolling this re-anchors the live scheduler rather
+   * than restarting it, so the playhead can be dragged around during playback
+   * without the audio glitching or the graph being rebuilt on every move.
+   */
+  const onScrubSeek = useCallback((t: number) => {
+    useDaw.getState().setTransport({ position: t });
+    transport.seek(t);
+  }, []);
 
   const totalBytes = buffers.totalBytes();
 
@@ -478,21 +598,21 @@ export function DawPage() {
             <span className="t-micro">Tempo</span>
             <input
               className="input"
-              style={{ width: 62, height: 26 }}
+              style={{ width: 64 }}
               type="number"
               min={20}
               max={400}
               value={s.bpm}
               onChange={(e) => s.setProject({ bpm: Math.max(20, Math.min(400, Number(e.target.value) || 120)) })}
-              aria-label="Project tempo"
+              aria-label="Project tempo in BPM"
             />
+            <span className="t-micro">BPM</span>
           </span>
-          <span className="t-micro">BPM</span>
         </div>
 
         <span className="panel__spacer" />
 
-        <div className="transport__cluster hide-xl">
+        <div className="transport__cluster hide-xl" title="Master output level, post-limiter">
           <Legend color={engine.running ? 'green' : 'amber'} size="sm">
             {engine.running ? 'ENGINE' : 'ARM'}
           </Legend>
@@ -528,7 +648,7 @@ export function DawPage() {
       {/* ── Timeline ──────────────────────────────────────────────────── */}
       <Timeline
         onFilesDropped={(files, trackId, at) => void importFiles(files, trackId, at)}
-        onSeek={(t) => useDaw.getState().setTransport({ position: t })}
+        onSeek={onScrubSeek}
         onScrub={(t) => void scrub(t)}
       />
 
@@ -544,24 +664,40 @@ export function DawPage() {
             ]}
           />
           <span className="panel__spacer" />
-          <span className="transport__pair">
-            <span className="t-micro">Deck</span>
+          {/* Deck height reads left→right as SHORTER→TALLER, matching what the
+              control does. The old slider ran the opposite way to its own
+              label, so dragging right made the timeline smaller. */}
+          <span className="transport__pair deck__size">
+            <span className="t-micro">Timeline</span>
+            <Icon name="zoomOut" size={12} />
             <input
               className="range range--slim"
-              style={{ width: 110 }}
+              style={{ width: 118 }}
               type="range"
               min={220}
-              max={560}
+              max={620}
               step={10}
               value={timelineH}
               onChange={(e) => setTimelineH(Number(e.target.value))}
-              aria-label="Timeline height"
+              aria-label="Timeline height in pixels"
+              aria-valuetext={`${timelineH} pixels`}
+              title="Timeline height — drag right for a taller timeline"
             />
+            <Icon name="zoomIn" size={12} />
+            <Readout value={timelineH} unit="px" size="sm" tone="plain" />
           </span>
         </div>
 
         <div className="deck__col">
-          {deck === 'mixer' ? <Mixer /> : <Scopes />}
+          {deck === 'mixer' && <Mixer />}
+          {deck === 'scopes' && s.scope.docked && <Scopes />}
+          {deck === 'scopes' && !s.scope.docked && (
+            <div className="deck__floatnote">
+              <Icon name="activity" size={14} />
+              <span className="t-label">Instruments are floating</span>
+              <span className="t-hint">Use Dock in the Instruments panel to bring them back here.</span>
+            </div>
+          )}
           <div className="ticker">
             <span className="ticker__seg">
               <Led size="sm" color={s.playing ? 'green' : 'cyan'} on={s.playing} />
@@ -571,7 +707,12 @@ export function DawPage() {
             <span className="ticker__seg">SCROLL {s.view.scroll.toFixed(2)} S</span>
             <span className="ticker__seg">CLIPS {s.clips.length}</span>
             <span className="ticker__seg">SEL {s.selection.length}</span>
-            <span className="ticker__seg">SRC {(totalBytes / (1024 * 1024)).toFixed(1)} MB</span>
+            <span className="ticker__seg" title="Decoded audio held in memory">
+              SRC {(totalBytes / (1024 * 1024)).toFixed(1)} MB
+            </span>
+            <span className="ticker__seg" title="Source files persisted for reload, in IndexedDB">
+              VAULT {(mediaBytes / (1024 * 1024)).toFixed(1)} MB
+            </span>
             {anySolo && <span className="ticker__seg" style={{ color: 'var(--green-hi)' }}>SOLO ACTIVE</span>}
             {recordingArmed && <span className="ticker__seg" style={{ color: 'var(--red-hi)' }}>● REC</span>}
             <span className="panel__spacer" />
@@ -609,6 +750,10 @@ export function DawPage() {
           </div>
         </div>
       </div>
+
+      {/* Rendered outside the deck switch so floating instruments survive a
+          tab change — previously they unmounted with the deck and vanished. */}
+      {!s.scope.docked && <Scopes />}
 
       <ExportDialog open={exportOpen} onClose={() => setExportOpen(false)} />
     </div>
@@ -681,9 +826,9 @@ function MasterStripMeter() {
     return () => cancelAnimationFrame(raf);
   }, []);
   return (
-    <span className="row" style={{ gap: 5, paddingLeft: 6 }}>
+    <span className="transport__pair">
       <span className="t-micro">OUT</span>
-      <span className="meter" style={{ width: 54, height: 7 }}>
+      <span className="meter" style={{ width: 78, height: 9, display: 'block' }}>
         <span className="meter__fill" ref={ref} />
         <span className="meter__scale" />
       </span>

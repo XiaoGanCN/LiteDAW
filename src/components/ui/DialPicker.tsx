@@ -5,7 +5,7 @@
    Supports single-select and multi-select (chord building).
    ========================================================================= */
 
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 export interface DialItem<T extends string | number> {
   value: T;
@@ -33,6 +33,13 @@ export interface DialPickerProps<T extends string | number> {
   disabled?: boolean;
   /** Called whenever the head plays a note while scrubbing. */
   onPreview?: (v: T) => void;
+  /**
+   * Sound the detent under the finger the moment it is pressed (a plain tap).
+   * Dragging *between* detents always previews, whatever this says, so a silent
+   * answer surface stays silent while the scrub affordance keeps working.
+   * Defaults to `true` (the historic behaviour).
+   */
+  previewOnPress?: boolean;
 }
 
 
@@ -49,10 +56,17 @@ export function DialPicker<T extends string | number>({
   accent = 'var(--red)',
   disabled = false,
   onPreview,
+  previewOnPress = true,
 }: DialPickerProps<T>) {
   const ref = useRef<SVGSVGElement>(null);
   const [dragIdx, setDragIdx] = useState<number | null>(null);
   const [hotIdx, setHotIdx] = useState<number | null>(null);
+  /**
+   * Where the head rests. Single mode mirrors `value`; multi mode keeps the
+   * last detent the player scrubbed or committed to, so the handle never
+   * disappears while a chord is being built (it used to be dropped entirely).
+   */
+  const [headIdx, setHeadIdx] = useState(0);
   const lastPreview = useRef<number | null>(null);
   const n = items.length;
 
@@ -91,6 +105,32 @@ export function DialPicker<T extends string | number>({
     [n],
   );
 
+  const selectedSet = useMemo(() => new Set(values.map(String)), [values]);
+  const selectedIdx = useMemo(() => {
+    const first = mode === 'multi' ? values[0] : value;
+    if (first === undefined) return -1;
+    return items.findIndex((x) => x.value === first);
+  }, [items, mode, value, values]);
+
+  /* Single mode: the head tracks the committed value. Multi mode: the head
+     stays on the detent it was left on while that detent is part of the
+     selection, and only re-homes to the first selected item when it is not. */
+  useEffect(() => {
+    if (mode === 'single') {
+      if (selectedIdx >= 0) setHeadIdx(selectedIdx);
+      return;
+    }
+    setHeadIdx((h) => {
+      const cur = items[h];
+      if (cur && selectedSet.has(String(cur.value))) return h;
+      const first = items.findIndex((x) => selectedSet.has(String(x.value)));
+      return first >= 0 ? first : h;
+    });
+  }, [items, mode, selectedIdx, selectedSet]);
+
+  const restingIdx = mode === 'single' ? (items.length ? Math.max(0, selectedIdx) : -1) : headIdx;
+  const activeIdx = dragIdx !== null ? dragIdx : Math.min(Math.max(0, restingIdx), Math.max(0, n - 1));
+
   const commit = useCallback(
     (i: number) => {
       const it = items[i];
@@ -101,20 +141,29 @@ export function DialPicker<T extends string | number>({
     [items, mode, onChange, onToggle],
   );
 
-  const scrub = (i: number) => {
-    if (lastPreview.current === i) return;
-    lastPreview.current = i;
-    const it = items[i];
-    if (it && !it.muted) onPreview?.(it.value);
-  };
+  /** One preview per detent crossing — a sweep across the ring must never
+   *  machine-gun the synth, and re-entering a detent previews once more. */
+  const scrub = useCallback(
+    (i: number) => {
+      if (lastPreview.current === i) return;
+      lastPreview.current = i;
+      const it = items[i];
+      if (it && !it.muted) onPreview?.(it.value);
+    },
+    [items, onPreview],
+  );
 
-  const activeIdx = useMemo(() => {
-    if (dragIdx !== null) return dragIdx;
-    if (mode === 'multi') return -1;
-    return Math.max(0, items.findIndex((x) => x.value === value));
-  }, [dragIdx, items, mode, value]);
-
-  const selectedSet = useMemo(() => new Set(values.map(String)), [values]);
+  const stepHead = useCallback(
+    (delta: number) => {
+      if (n === 0) return;
+      const from = dragIdx ?? activeIdx;
+      const next = (((from + delta) % n) + n) % n;
+      setHeadIdx(next);
+      setHotIdx(next);
+      scrub(next);
+    },
+    [activeIdx, dragIdx, n, scrub],
+  );
 
   const handleAngle = activeIdx >= 0 ? angleOf(activeIdx) : -90;
   const [hx, hy] = pointAt(handleAngle, ringR);
@@ -156,24 +205,32 @@ export function DialPicker<T extends string | number>({
           touchAction: 'none',
           cursor: disabled ? 'not-allowed' : 'grab',
         }}
+        tabIndex={disabled ? -1 : 0}
         onPointerDown={(e) => {
           if (disabled) return;
           (e.currentTarget as SVGSVGElement).setPointerCapture(e.pointerId);
           const i = idxFromEvent(e.clientX, e.clientY);
           setDragIdx(i);
-          scrub(i);
+          setHeadIdx(i);
+          /* A tap only sounds when the answer surface is allowed to speak;
+             a drag still previews every detent it crosses. */
+          if (previewOnPress) scrub(i);
         }}
         onPointerMove={(e) => {
           if (disabled) return;
           const i = idxFromEvent(e.clientX, e.clientY);
           setHotIdx(i);
-          if (dragIdx !== null) {
+          if (dragIdx !== null && i !== dragIdx) {
             setDragIdx(i);
+            setHeadIdx(i);
             scrub(i);
           }
         }}
         onPointerUp={() => {
-          if (dragIdx !== null) commit(dragIdx);
+          if (dragIdx !== null) {
+            commit(dragIdx);
+            setHeadIdx(dragIdx);
+          }
           setDragIdx(null);
           lastPreview.current = null;
         }}
@@ -182,8 +239,24 @@ export function DialPicker<T extends string | number>({
           lastPreview.current = null;
         }}
         onPointerLeave={() => setHotIdx(null)}
+        onKeyDown={(e) => {
+          if (disabled) return;
+          if (e.key === 'ArrowRight' || e.key === 'ArrowDown') {
+            e.preventDefault();
+            stepHead(1);
+          } else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') {
+            e.preventDefault();
+            stepHead(-1);
+          } else if (e.key === 'Enter' || e.key === ' ' || e.key === 'Spacebar') {
+            e.preventDefault();
+            commit(activeIdx);
+            setHeadIdx(activeIdx);
+          }
+        }}
         role="listbox"
         aria-label={label ?? 'dial picker'}
+        aria-multiselectable={mode === 'multi' || undefined}
+        aria-disabled={disabled || undefined}
       >
         <defs>
           <radialGradient id="dial-face" cx="50%" cy="34%" r="76%">
@@ -230,13 +303,21 @@ export function DialPicker<T extends string | number>({
           const a0 = angleOf(i) - step / 2 + gap / 2;
           const a1 = angleOf(i) + step / 2 - gap / 2;
           const isSel = mode === 'multi' ? selectedSet.has(String(it.value)) : i === activeIdx;
+          const isHead = i === activeIdx;
           const isHot = hotIdx === i || dragIdx === i;
           const tickA = angleOf(i);
           const [tx0, ty0] = pointAt(tickA, tickInner);
           const [tx1, ty1] = pointAt(tickA, tickOuter);
           const [lx, ly] = pointAt(tickA, labelR);
           return (
-            <g key={String(it.value)} onPointerDown={() => !disabled && commit(i)} style={{ cursor: disabled ? 'not-allowed' : 'pointer' }}>
+            <g
+              key={String(it.value)}
+              role="option"
+              aria-selected={isSel}
+              aria-label={it.sub ? `${it.label} ${it.sub}` : it.label}
+              aria-disabled={it.muted || undefined}
+              opacity={it.muted ? 0.25 : 1}
+            >
               <path
                 d={arcPath(a0, a1)}
                 fill="none"
@@ -248,8 +329,8 @@ export function DialPicker<T extends string | number>({
               />
               <path
                 d={`M${tx0} ${ty0}L${tx1} ${ty1}`}
-                stroke={isSel ? '#fff' : 'rgba(190,210,225,.32)'}
-                strokeWidth={isSel ? 2 : 1.2}
+                stroke={isSel ? '#fff' : isHot || isHead ? 'rgba(190,210,225,.55)' : 'rgba(190,210,225,.32)'}
+                strokeWidth={isSel ? 2 : isHead ? 1.6 : 1.2}
                 opacity={it.muted ? 0.3 : 1}
               />
               <text
@@ -279,14 +360,15 @@ export function DialPicker<T extends string | number>({
           );
         })}
 
-        {/* head */}
-        {activeIdx >= 0 && (
+        {/* head — always present while the dial has detents, in both modes */}
+        {n > 0 && (
           <g
             style={{
               transform: `translate(${hx}px, ${hy}px)`,
-              transition: dragIdx === null ? 'transform 260ms var(--ease-snap)' : 'none',
+              transition: dragIdx === null ? 'transform var(--t-base) var(--ease-snap)' : 'none',
             }}
             filter="url(#dial-glow)"
+            aria-hidden="true"
           >
             <circle r={11} fill="#0b0f13" stroke={accent} strokeWidth={2.4} />
             <circle r={4} fill={accent} />
@@ -307,7 +389,7 @@ export function DialPicker<T extends string | number>({
                   .map((i) => i.label)
                   .join(' ')
               : '—'
-            : items[activeIdx]?.label ?? '—'}
+            : items[Math.max(0, selectedIdx)]?.label ?? '—'}
         </span>
         {label && <span className="dial__center-lab">{label}</span>}
       </div>

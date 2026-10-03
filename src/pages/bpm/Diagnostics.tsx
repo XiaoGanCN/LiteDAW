@@ -95,9 +95,11 @@ export function DiagnosticsPanel({
           })}
         </div>
         <span className="bpm-axis">
-          <span className="t-micro">{Math.round(lo)}</span>
-          <span className="t-micro">mean |error %| per bucket · weak buckets get re-asked</span>
-          <span className="t-micro">{Math.round(hi)}</span>
+          <span className="bpm-axis__ends">
+            <span className="t-micro">{Math.round(lo)} BPM</span>
+            <span className="t-micro">{Math.round(hi)} BPM</span>
+          </span>
+          <span className="t-micro bpm-axis__note">mean |error %| per bucket · weak buckets get re-asked</span>
         </span>
       </div>
 
@@ -128,9 +130,11 @@ export function DiagnosticsPanel({
           <span className="bpm-note t-hint">No rounds logged.</span>
         )}
         <span className="bpm-axis">
-          <span className="t-micro">older</span>
-          <span className="t-micro">0 = dead on · ± = fast / slow</span>
-          <span className="t-micro">newer</span>
+          <span className="bpm-axis__ends">
+            <span className="t-micro">older</span>
+            <span className="t-micro">newer</span>
+          </span>
+          <span className="t-micro bpm-axis__note">0 = dead on · ± = fast / slow</span>
         </span>
       </div>
 

@@ -8,8 +8,9 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { engine, type MeterTap } from '../../audio/engine';
 import { Meter } from '../../components/ui/Hardware';
 import { Btn, Legend, Panel, Segmented } from '../../components/ui/kit';
-import { SCOPE_THEMES, paintSpectrum, paintWaveform } from '../../audio/scopes';
+import { SCOPE_THEMES } from '../../audio/scopes';
 import { currentFxLevel, useSettings } from '../../state/settings';
+import { paintMonitorSpectrum, paintMonitorWave } from './monitor';
 
 const FFT = 2048;
 const BINS = FFT / 2;
@@ -90,11 +91,11 @@ export function ScopeStrip({ live, questionLabel }: { live: boolean; questionLab
       if (mode === 'fft') {
         if (tap) tap.node.getFloatFrequencyData(freqBuf);
         else freqBuf.fill(-140);
-        paintSpectrum(g, freqBuf, engine.sampleRate, { ...opts, floorDb: -104, peaks: peakBuf, minHz: 40, maxHz: 12000 });
+        paintMonitorSpectrum(g, freqBuf, engine.sampleRate, { ...opts, floorDb: -104, peaks: peakBuf, minHz: 40, maxHz: 12000 });
       } else {
         if (tap) tap.node.getFloatTimeDomainData(waveBuf);
         else waveBuf.fill(0);
-        paintWaveform(g, waveBuf, { ...opts, scale: 1.7, trigger: true });
+        paintMonitorWave(g, waveBuf, { ...opts, scale: 1.7, trigger: true });
       }
     };
     raf = requestAnimationFrame(draw);

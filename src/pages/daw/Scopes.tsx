@@ -72,6 +72,7 @@ export function Scopes() {
   const scope = useDaw((s) => s.scope);
   const setScope = useDaw((s) => s.setScope);
   const themeId = useSettings((s) => s.scopeTheme);
+  const fps = useSettings((s) => s.scopeFps);
   const theme = SCOPE_THEMES[themeId];
   const enabled = scope.spectrum || scope.wave || scope.vector;
   const { analysers, ready } = useScopeAnalysers(enabled);
@@ -119,9 +120,9 @@ export function Scopes() {
             All instruments off
           </div>
         )}
-        {scope.spectrum && <ScopeCanvas kind="spectrum" theme={theme} gain={scope.gain} analysers={ready ? analysers : null} />}
-        {scope.wave && <ScopeCanvas kind="wave" theme={theme} gain={scope.gain} analysers={ready ? analysers : null} />}
-        {scope.vector && <ScopeCanvas kind="vector" theme={theme} gain={scope.gain} analysers={ready ? analysers : null} />}
+        {scope.spectrum && <ScopeCanvas kind="spectrum" theme={theme} gain={scope.gain} fps={fps} analysers={ready ? analysers : null} />}
+        {scope.wave && <ScopeCanvas kind="wave" theme={theme} gain={scope.gain} fps={fps} analysers={ready ? analysers : null} />}
+        {scope.vector && <ScopeCanvas kind="vector" theme={theme} gain={scope.gain} fps={fps} analysers={ready ? analysers : null} />}
       </div>
     </Panel>
   );
@@ -164,11 +165,13 @@ function ScopeCanvas({
   kind,
   theme,
   gain,
+  fps,
   analysers,
 }: {
   kind: 'spectrum' | 'wave' | 'vector';
   theme: (typeof SCOPE_THEMES)[keyof typeof SCOPE_THEMES];
   gain: number;
+  fps: number;
   analysers: Analysers;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -180,14 +183,27 @@ function ScopeCanvas({
     const ctx = cv.getContext('2d');
     if (!ctx) return;
     let raf = 0;
-    const freq = new Float32Array(2048);
+    const freq = new Float32Array(4096);
     const wave = new Float32Array(4096);
     const l = new Float32Array(2048);
     const r = new Float32Array(2048);
     const scaled = new Float32Array(2048);
-    const peaks = new Float32Array(360);
+    /* One peak-hold entry per pixel column, so the staircase is drawn through
+       the nearest bin rather than being resampled. */
+    let peakStore: Float32Array | null = null;
+    let peakWidth = 0;
+    let last = performance.now();
+    const minInterval = 1000 / Math.max(5, Math.min(60, fps));
 
-    const draw = () => {
+    const draw = (now: number) => {
+      raf = requestAnimationFrame(draw);
+      const elapsed = now - last;
+      if (elapsed < minInterval) return;
+      last = now;
+      /* Time-based decay: the peak-hold and the phosphor are specified in
+         per-second terms, so a 30 fps and a 60 fps display must agree. */
+      const dt = Math.min(0.25, elapsed / 1000);
+
       const dpr = Math.min(2, window.devicePixelRatio || 1);
       const w = cv.clientWidth || 320;
       if (cv.width !== Math.floor(w * dpr) || cv.height !== Math.floor(h * dpr)) {
@@ -195,41 +211,45 @@ function ScopeCanvas({
         cv.height = Math.floor(h * dpr);
       }
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-      const o = { width: w, height: h, theme, fx: currentFxLevel() };
+      const o = { width: w, height: h, theme, fx: currentFxLevel(), dt };
 
       if (analysers) {
         if (kind === 'spectrum') {
           const n = Math.min(freq.length, analysers.master.frequencyBinCount);
           const view = freq.subarray(0, n);
           analysers.master.getFloatFrequencyData(view);
-          paintSpectrum(ctx, view, engine.sampleRate, { ...o, floorDb: -96, peaks });
+          const cols = Math.max(2, Math.floor(w));
+          if (!peakStore || peakWidth !== cols) {
+            peakStore = new Float32Array(cols);
+            peakWidth = cols;
+          }
+          paintSpectrum(ctx, view, engine.sampleRate, { ...o, floorDb: -96, peaks: peakStore });
         } else if (kind === 'wave') {
           const n = Math.min(wave.length, analysers.master.fftSize);
           const view = wave.subarray(0, n);
           analysers.master.getFloatTimeDomainData(view);
-          paintWaveform(ctx, view, { ...o, scale: gain });
+          paintWaveform(ctx, view, { ...o, scale: gain, trigger: true });
         } else {
           const n = Math.min(l.length, analysers.left.fftSize);
           const lv = l.subarray(0, n);
           const rv = r.subarray(0, n);
           analysers.left.getFloatTimeDomainData(lv);
           analysers.right.getFloatTimeDomainData(rv);
-          for (let i = 0; i < n; i++) scaled[i] = Math.max(-1.4, Math.min(1.4, lv[i] * gain));
-          const lScaled = scaled.subarray(0, n);
-          for (let i = 0; i < n; i++) scaled[i] = Math.max(-1.4, Math.min(1.4, rv[i] * gain));
-          const rScaled = scaled.subarray(0, n);
-          paintVectorscope(ctx, lScaled, rScaled, o);
+          for (let i = 0; i < n; i++) scaled[i] = lv[i];
+          const lScaled = scaled.slice(0, n);
+          for (let i = 0; i < n; i++) scaled[i] = rv[i];
+          const rScaled = scaled.slice(0, n);
+          paintVectorscope(ctx, lScaled, rScaled, { ...o, scale: gain });
         }
       } else {
         ctx.clearRect(0, 0, w, h);
         ctx.fillStyle = 'rgba(4,7,10,.9)';
         ctx.fillRect(0, 0, w, h);
       }
-      raf = requestAnimationFrame(draw);
     };
     raf = requestAnimationFrame(draw);
     return () => cancelAnimationFrame(raf);
-  }, [analysers, gain, h, kind, theme]);
+  }, [analysers, fps, gain, h, kind, theme]);
 
   return (
     <div className="scope">

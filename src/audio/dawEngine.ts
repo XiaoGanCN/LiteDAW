@@ -26,13 +26,24 @@ export interface Graph {
 
 export interface GraphOptions {
   masterGain?: number;
+  /**
+   * Where the project master lands. Realtime playback MUST pass
+   * `engine.bus('daw')` so the mix joins the shared master chain — that is what
+   * the Instruments deck, the transport OUT meter, the master analyser and the
+   * limiter all tap. Connecting straight to `ctx.destination` instead (the
+   * original behaviour) silently bypassed all of them, which is why every scope
+   * read flat while the Studio was playing. Offline rendering passes the
+   * OfflineAudioContext's own destination, which lives in a different graph.
+   */
+  output?: AudioNode;
 }
 
 /** Builds the mixer topology shared by realtime playback and offline render. */
 export function buildGraph(ctx: BaseAudioContext, state: DawState, opts: GraphOptions = {}): Graph {
   const masterIn = ctx.createGain();
   masterIn.gain.value = opts.masterGain ?? state.masterVolume;
-  masterIn.connect(ctx.destination);
+  const sink = opts.output ?? engine.bus('daw');
+  masterIn.connect(sink);
 
   const strips = new Map<string, StripNodes>();
   const anySolo = state.tracks.some((t) => t.solo);
@@ -196,6 +207,37 @@ export class DawTransport {
   }
 
   /**
+   * Re-anchors playback at a new project position WITHOUT rebuilding the graph.
+   *
+   * Repositioning used to go through `start()`, which tears the graph down and
+   * rebuilds it — far too heavy to run on every pointer move while the user
+   * drags the playhead during playback. This drops the sources that have not
+   * sounded yet and re-maps project time onto the audio clock, so the
+   * scheduler refills from the new position on its next tick.
+   */
+  seek(projectSec: number) {
+    const ctx = engine.ctx;
+    if (!ctx || !this.playing) return;
+    const now = ctx.currentTime;
+    const keep: Live[] = [];
+    this.live.forEach((l) => {
+      if (l.startAt > now + 0.02) {
+        try {
+          l.src.onended = null;
+          l.src.stop();
+          l.gain.disconnect();
+        } catch {
+          /* already finished */
+        }
+      } else keep.push(l);
+    });
+    this.live = keep;
+    this.originCtxTime = now + 0.03;
+    this.startPos = Math.max(0, projectSec);
+    this.schedPos = Math.max(0, projectSec);
+  }
+
+  /**
    * Pushes a fresh project snapshot. Graph parameters are applied instantly;
    * `reschedule` additionally drops clips that have not started sounding yet so
    * edits to their position or content take effect on the next window.
@@ -254,15 +296,31 @@ export class DawTransport {
     if (!ctx || !s) return;
 
     const horizon = ctx.currentTime + LOOKAHEAD;
+    const looping = s.loopOn && s.loopEnd > s.loopStart;
+
+    /* If the scheduler has fallen past the end of the loop — because the user
+       seeked beyond it, dragged the loop end in front of the playhead, or
+       enabled a loop behind the playhead — jump straight back inside it. Doing
+       this BEFORE any time arithmetic is what keeps the project↔context mapping
+       from inverting, which previously produced huge negative AudioParam times
+       ("Time must be a finite non-negative number: -172.393"). */
+    if (looping && this.schedPos >= s.loopEnd) {
+      this.originCtxTime = ctx.currentTime + 0.02;
+      this.startPos = s.loopStart;
+      this.schedPos = s.loopStart;
+      this.onWrap?.();
+    }
+
     let guard = 0;
     while (this.ctxTimeOf(this.schedPos) < horizon && guard++ < 512) {
-      const looping = s.loopOn && s.loopEnd > s.loopStart;
       const windowEnd = looping ? Math.min(this.schedPos + LOOKAHEAD, s.loopEnd) : this.schedPos + LOOKAHEAD;
       this.scheduleWindow(s, this.schedPos, windowEnd);
 
       if (looping && windowEnd >= s.loopEnd) {
-        // Realign the mapping so the loop is seamless in the audio clock.
-        const wrapCtxTime = this.ctxTimeOf(s.loopEnd);
+        /* Realign the mapping so the loop is seamless in the audio clock. The
+           wrap instant can never be in the past, so clamp it: a negative
+           origin would poison every subsequent schedule. */
+        const wrapCtxTime = Math.max(this.ctxTimeOf(s.loopEnd), ctx.currentTime + 0.005);
         this.originCtxTime = wrapCtxTime;
         this.startPos = s.loopStart;
         this.schedPos = s.loopStart;
@@ -310,7 +368,7 @@ export class DawTransport {
     const srcDur = Math.min((winEnd - winStart) * rate, Math.max(0, buffer.duration - srcOffset));
     if (srcDur <= 0) return;
 
-    const when = this.ctxTimeOf(winStart);
+    const when = Math.max(0, this.ctxTimeOf(winStart));
     const src = ctx.createBufferSource();
     src.buffer = buffer;
     src.playbackRate.value = rate;
@@ -373,7 +431,7 @@ export async function renderProject(state: DawState, opts: RenderOptions): Promi
     (window as unknown as { webkitOfflineAudioContext: typeof OfflineAudioContext }).webkitOfflineAudioContext;
   const ctx = new OAC(opts.channels, Math.ceil(duration * opts.sampleRate), opts.sampleRate);
 
-  const graph = buildGraph(ctx, state, { masterGain: state.masterVolume });
+  const graph = buildGraph(ctx, state, { masterGain: state.masterVolume, output: ctx.destination });
   // Downmix/stereo spread happens through the channel count of the context.
   if (opts.channels === 1) graph.masterIn.channelCount = 1;
 

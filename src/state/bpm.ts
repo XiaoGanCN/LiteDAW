@@ -81,6 +81,40 @@ export const DEFAULT_BPM_CONFIG: BpmConfig = {
   adaptivity: 0.55,
 };
 
+/** Hard bounds of the tempo-range control (and of the answer dial's sweep). */
+export const BPM_FLOOR = 20;
+export const BPM_CEIL = 400;
+/** Smallest allowed min↔max gap so the 12-region model keeps a usable span. */
+export const BPM_MIN_SPAN = 5;
+
+/** Clamps a min/max pair into the legal bounds while preserving min < max. */
+export function normalizeRange(min: number, max: number): { minBpm: number; maxBpm: number } {
+  const r = (v: number) => Math.round(Math.max(BPM_FLOOR, Math.min(BPM_CEIL, Number.isFinite(v) ? v : BPM_FLOOR)));
+  let a = r(min);
+  let b = r(max);
+  if (b < a) [a, b] = [b, a];
+  if (b - a < BPM_MIN_SPAN) {
+    // Open the span: borrow from below the low end first, then above the high one.
+    const need = BPM_MIN_SPAN - (b - a);
+    const down = Math.min(need, a - BPM_FLOOR);
+    a -= down;
+    b += Math.min(need - down, BPM_CEIL - b);
+  }
+  return { minBpm: a, maxBpm: b };
+}
+
+/** Which surface the player dials the answer on. */
+export type AnswerSurface = 'wheel' | 'dial';
+
+export interface BpmUi {
+  /** Beat visualiser (pendulum + lamps). Off by default: pure listening. */
+  visOn: boolean;
+  /** Last answer-entry surface used — remembered across sessions. */
+  surface: AnswerSurface;
+}
+
+export const DEFAULT_BPM_UI: BpmUi = { visOn: false, surface: 'wheel' };
+
 export interface ActiveRound {
   target: number;
   numerator: number;
@@ -95,11 +129,13 @@ export interface ActiveRound {
 
 interface BpmStore {
   cfg: BpmConfig;
+  ui: BpmUi;
   phase: 'idle' | 'listening' | 'answering' | 'revealed' | 'tapping';
   round: ActiveRound | null;
   lastRound: BpmRound | null;
   stats: BpmStats;
   setCfg: <K extends keyof BpmConfig>(key: K, value: BpmConfig[K]) => void;
+  setUi: <K extends keyof BpmUi>(key: K, value: BpmUi[K]) => void;
   resetConfig: () => void;
   begin: (r: ActiveRound) => void;
   setPhase: (p: BpmStore['phase']) => void;
@@ -123,12 +159,14 @@ export const useBpm = create<BpmStore>()(
   persist(
     (set, get) => ({
       cfg: { ...DEFAULT_BPM_CONFIG },
+      ui: { ...DEFAULT_BPM_UI },
       phase: 'idle',
       round: null,
       lastRound: null,
       stats: emptyStats(),
 
       setCfg: (key, value) => set((s) => ({ cfg: { ...s.cfg, [key]: value } })),
+      setUi: (key, value) => set((s) => ({ ui: { ...s.ui, [key]: value } })),
       resetConfig: () => set({ cfg: { ...DEFAULT_BPM_CONFIG } }),
       begin: (round) => set({ round, phase: 'listening', lastRound: null }),
       setPhase: (phase) => set({ phase }),
@@ -208,8 +246,18 @@ export const useBpm = create<BpmStore>()(
     }),
     {
       name: 'litedaw.bpm',
-      version: 2,
-      partialize: (s) => ({ cfg: s.cfg, stats: s.stats }),
+      version: 3,
+      partialize: (s) => ({ cfg: s.cfg, stats: s.stats, ui: s.ui }),
+      /**
+       * v2 shipped before the UI slice existed, and the beat visualiser used to
+       * default to on. Keep every logged round but fold the new slice in with
+       * its (off) defaults rather than throwing the model away.
+       */
+      migrate: (persisted, version) => {
+        const p = (persisted ?? {}) as Partial<{ cfg: BpmConfig; stats: BpmStats; ui: BpmUi }>;
+        if (version < 3) return { ...p, ui: { ...DEFAULT_BPM_UI, ...p.ui } };
+        return p;
+      },
     },
   ),
 );

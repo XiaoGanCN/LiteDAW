@@ -21,6 +21,10 @@
    ══════════════════════════════════════════════════════════════════════════ */
 
 .transport {
+  /* One control height for the whole toolbar. Mixing 36x30 transport buttons
+     with 25 px icon buttons and 25 px text buttons made the bar read as three
+     unrelated rows of hardware. */
+  --tool-h: 30px;
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -48,12 +52,43 @@
 .transport__cluster {
   display: flex;
   align-items: center;
+  min-height: var(--tool-h);
   gap: 3px;
-  padding: 3px;
+  padding: 2px;
   border-radius: var(--r-md);
   background: rgba(0, 0, 0, 0.42);
   border: 1px solid var(--hair);
   box-shadow: var(--sh-inset-well);
+}
+/* Labels inside a cluster use the shared label gap, so SNAP / TEMPO / OUT all
+   breathe identically instead of each carrying an ad-hoc padding. */
+.transport__cluster > .t-micro {
+  padding: 0 var(--gap-label-control);
+  white-space: nowrap;
+}
+.transport__pair {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gap-label-control);
+  white-space: nowrap;
+}
+/* Every control in the toolbar is one height. */
+.transport .btn,
+.transport .btn--sm,
+.transport .btn--icon {
+  --btn-h: var(--tool-h);
+}
+.transport .btn--icon {
+  width: var(--tool-h);
+}
+.transport .seg {
+  min-height: var(--tool-h);
+}
+.transport .input {
+  height: 24px;
+}
+.transport .readout {
+  padding: 4px 8px;
 }
 
 .tbtn {
@@ -61,7 +96,7 @@
   display: grid;
   place-items: center;
   width: 36px;
-  height: 30px;
+  height: var(--tool-h);
   border-radius: var(--r-sm);
   color: var(--alu-400);
   border: 1px solid transparent;
@@ -749,4 +784,220 @@
   .transport__pos {
     font-size: var(--fs-md);
   }
+}
+
+/* The minimap band of the ruler advertises itself as a navigation control. */
+.tl__rulercanvas {
+  touch-action: none;
+}
+.tl__rulercanvas:hover {
+  filter: brightness(1.12);
+}
+
+/* ── Track header: reorder grip, delete, resize ────────────────────────── */
+
+.trk__grip {
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 19px;
+  flex: 0 0 auto;
+  border-radius: var(--r-xs);
+  border: 1px solid transparent;
+  color: var(--ink-ghost);
+  cursor: grab;
+  touch-action: none;
+  transition: color var(--t-fast) linear, border-color var(--t-base) linear, background var(--t-base) linear;
+}
+.trk__grip:hover {
+  color: var(--alu-100);
+  border-color: var(--hair-2);
+  background: rgba(255, 255, 255, 0.05);
+}
+.trk__grip:active {
+  cursor: grabbing;
+}
+
+.trk__btn[data-kind='del']:hover {
+  color: var(--red-hi);
+  border-color: rgba(199, 15, 40, 0.5);
+  background: rgba(199, 15, 40, 0.14);
+}
+
+.trk[data-dragging='true'] {
+  opacity: 0.55;
+}
+/* Insertion indicator while dragging a track to a new position. */
+.trk[data-dropbefore='true']::after,
+.trk[data-dropafter='true']::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: var(--cyan);
+  box-shadow: var(--glow-cyan);
+  pointer-events: none;
+}
+.trk[data-dropbefore='true']::after {
+  top: -1px;
+}
+.trk[data-dropafter='true']::after {
+  bottom: -1px;
+}
+/* A drop at the very end of the list needs its own hairline. */
+.trk[data-last='true'][data-dropafter='true']::after {
+  bottom: -3px;
+}
+
+.trk__resize {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 7px;
+  cursor: ns-resize;
+  touch-action: none;
+  z-index: 2;
+}
+.trk__resize::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 3px;
+  width: 26px;
+  height: 2px;
+  margin-left: -13px;
+  border-radius: 1px;
+  background: rgba(190, 210, 225, 0.18);
+  transition: background var(--t-base) linear, box-shadow var(--t-base) var(--ease-out);
+}
+.trk__resize:hover::after {
+  background: var(--cyan);
+  box-shadow: var(--glow-cyan);
+}
+
+/* Keep the level row clear of the resize grip. */
+.trk__row--last {
+  margin-bottom: 3px;
+}
+
+/* ── Deck toolbar ─────────────────────────────────────────────────────── */
+
+.deck__bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: 5px var(--sp-3) 0;
+  flex-wrap: wrap;
+}
+
+/* Deck height control: icon, track, icon, numeric readout. */
+.deck__size {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--gap-label-control);
+  color: var(--ink-ghost);
+}
+.deck__size svg {
+  flex: 0 0 auto;
+}
+
+/* Shown in the deck while the Instruments are floating elsewhere. */
+.deck__floatnote {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-4);
+  border-radius: var(--r-lg);
+  border: 1px dashed var(--hair-3);
+  background: rgba(0, 0, 0, 0.22);
+  color: var(--ink-dim);
+}
+.deck__floatnote svg {
+  color: var(--cyan);
+}
+
+/* ── Inspector switch strip ───────────────────────────────────────────── */
+
+.swstrip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(58px, 1fr));
+  gap: 4px;
+}
+.swcell {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 7px 4px 6px;
+  border-radius: var(--r-sm);
+  border: 1px solid var(--hair);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(0, 0, 0, 0.28));
+  color: var(--ink-faint);
+  transition:
+    color var(--t-fast) linear,
+    border-color var(--t-base) linear,
+    background var(--t-base) linear,
+    box-shadow var(--t-base) var(--ease-out),
+    border-radius var(--t-base) var(--ease-snap);
+}
+.swcell:hover {
+  color: var(--alu-100);
+  border-color: var(--hair-3);
+}
+.swcell:active {
+  border-radius: var(--r-pill);
+}
+.swcell__label {
+  font-family: var(--font-label);
+  font-size: var(--fs-micro);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+.swcell__led {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #10151a;
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.9);
+}
+.swcell[data-on='true'] .swcell__led {
+  background: var(--sw, var(--red));
+  box-shadow: 0 0 7px var(--sw, var(--red));
+}
+.swcell[data-tone='red'] {
+  --sw: var(--red-hi);
+}
+.swcell[data-tone='green'] {
+  --sw: var(--green);
+}
+.swcell[data-tone='amber'] {
+  --sw: var(--amber);
+}
+.swcell[data-tone='cyan'] {
+  --sw: var(--cyan);
+}
+.swcell[data-on='true'] {
+  color: var(--sw, var(--red-hi));
+  border-color: color-mix(in srgb, var(--sw, var(--red)) 50%, transparent);
+  background: color-mix(in srgb, var(--sw, var(--red)) 14%, transparent);
+  box-shadow: 0 0 10px color-mix(in srgb, var(--sw, var(--red)) 35%, transparent);
+}
+
+/* EQ axis captions. */
+.eqgrab__tick {
+  font-family: var(--font-mono);
+  font-size: 7px;
+  fill: rgba(160, 185, 205, 0.42);
+  pointer-events: none;
+}
+
+/* Master strip readout must not escape its channel. */
+.chan .readout {
+  max-width: 100%;
+  padding: 4px 6px;
+  font-size: var(--fs-tiny);
+  justify-content: center;
 }

@@ -15,7 +15,7 @@ import {
 } from '../../audio/dsp';
 import { INSTRUMENTS, type InstrumentId } from '../../audio/synth';
 import { samples } from '../../audio/sampler';
-import { qualitiesFor, type PitchConfig, type Question } from '../../state/pitch';
+import { allowedPcs, answerablePcs, qualitiesFor, type PitchConfig, type Question } from '../../state/pitch';
 
 export { PC_NAMES };
 
@@ -72,9 +72,14 @@ export function midiForPc(pc: number, cfg: PitchConfig): number {
 
 /** All pitch classes the current scale/range permits. */
 export function allowedPcSet(cfg: PitchConfig): Set<number> {
-  if (!cfg.useScale) return new Set(Array.from({ length: 12 }, (_, i) => i));
-  const set = SCALES[cfg.scaleName] as readonly number[];
-  return new Set(set.map((i) => (cfg.scaleRoot + i) % 12));
+  /* The store owns the pool (flavour ∩ scale, never empty) — the answer surface
+     must agree with the generator, so it reads the same helper. */
+  return new Set(allowedPcs(cfg));
+}
+
+/** Every pitch class a correct answer could contain — what the dial may offer. */
+export function answerPcSet(cfg: PitchConfig): Set<number> {
+  return new Set(answerablePcs(cfg));
 }
 
 export const scaleOptions = (Object.keys(SCALES) as ScaleName[]).map((k) => ({
@@ -87,7 +92,27 @@ export const scaleOptions = (Object.keys(SCALES) as ScaleName[]).map((k) => ({
 export const ALL_QUALITIES = Object.keys(CHORD_INTERVALS) as ChordQuality[];
 
 export function activeQualities(cfg: PitchConfig): ChordQuality[] {
-  return qualitiesFor(cfg.chordFlavor, cfg.qualities, cfg.chordSize);
+  return qualitiesFor(cfg.chordFlavor, cfg.qualities, cfg.chordSizes);
+}
+
+/** `3` · `3/4` · `2/3/4/5` — the voice counts the generator may draw from. */
+export function sizeLabel(sizes: readonly number[]): string {
+  return sizes.length ? [...sizes].sort((a, b) => a - b).join('/') : '3';
+}
+
+/** `3-note` · `3/4-note` — for prose. */
+export function sizeName(sizes: readonly number[]): string {
+  return `${sizeLabel(sizes)}-note`;
+}
+
+/** Largest voice count the answer surface has to accept. */
+export function maxChordSize(cfg: PitchConfig): number {
+  return cfg.chordSizes.length ? Math.max(...cfg.chordSizes) : 3;
+}
+
+/** How many of the flavour's qualities can be voiced at each size. */
+export function qualitiesAtSize(cfg: PitchConfig, size: number): ChordQuality[] {
+  return qualitiesFor(cfg.chordFlavor, cfg.qualities, [size]).filter((q) => CHORD_INTERVALS[q].length === size);
 }
 
 /** `R · 4 · 7` */

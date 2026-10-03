@@ -42,6 +42,18 @@ class BufferRegistry {
 
   add(name: string, buffer: AudioBuffer, source = 'import'): RegisteredBuffer {
     const id = `buf_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 7)}`;
+    return this.addWithId(id, name, buffer, source);
+  }
+
+  /**
+   * Registers a buffer under a caller-supplied id. Restoring persisted media
+   * needs this: clips already reference the id that was stored alongside the
+   * audio, so the id has to survive a reload or every clip would come back
+   * unlinked.
+   */
+  addWithId(id: string, name: string, buffer: AudioBuffer, source = 'import'): RegisteredBuffer {
+    const existing = this.map.get(id);
+    if (existing) return existing;
     const rec: RegisteredBuffer = {
       id,
       name,

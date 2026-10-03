@@ -14,7 +14,7 @@ import {
   type ChordQuality,
   type ScaleName,
 } from '../../audio/dsp';
-import { rangeMidis, usePitch } from '../../state/pitch';
+import { CHORD_SIZE_CHOICES, allowedPcs, rangeMidis, scaleConflicts, usePitch } from '../../state/pitch';
 import type { AnswerInput, ChordFlavor, PlayStyle } from '../../state/pitch';
 import {
   ALL_QUALITIES,
@@ -23,7 +23,9 @@ import {
   boundsOf,
   noteName,
   qualityLabel,
+  qualitiesAtSize,
   scaleOptions,
+  sizeLabel,
 } from './shared';
 
 export function ConfigPanel() {
@@ -36,17 +38,29 @@ export function ConfigPanel() {
   const { low, high } = boundsOf(cfg);
   const pool = rangeMidis(cfg);
   const active = activeQualities(cfg);
-  const sizeMismatch = cfg.mode === 'chord' && !active.some((q) => CHORD_INTERVALS[q].length === cfg.chordSize);
+  const allowed = useMemo(() => allowedPcs(cfg), [cfg]);
+  const scaleDropped = scaleConflicts(cfg);
+  /* No selected size is backed by a quality — the generator falls back to the
+     whole flavour set, so say so rather than pretending the filter applied. */
+  const sizeMismatch = active.some((q) => !cfg.chordSizes.includes(CHORD_INTERVALS[q].length));
 
   const octaveLo = Math.min(cfg.octaveLow, cfg.octaveHigh);
   const octaveHi = Math.max(cfg.octaveLow, cfg.octaveHigh);
+
+  const toggleSize = (size: number) => {
+    const on = cfg.chordSizes.includes(size);
+    /* Never empty: the generator has to draw a voice count from somewhere. */
+    if (on && cfg.chordSizes.length === 1) return;
+    const next = on ? cfg.chordSizes.filter((s) => s !== size) : [...cfg.chordSizes, size];
+    setCfg('chordSizes', [...next].sort((a, b) => a - b));
+  };
 
   return (
     <Panel
       variant="alu"
       icon="gear"
       title="Configuration"
-      tag={cfg.mode === 'note' ? 'SINGLE TONE' : `${cfg.chordSize}-NOTE CHORD`}
+      tag={cfg.mode === 'note' ? `SINGLE TONE · ${sizeLabel(cfg.chordSizes)}` : `CHORD ${sizeLabel(cfg.chordSizes)}`}
       actions={
         <Btn size="sm" variant="ghost" icon="refresh" onClick={resetConfig} title="Restore factory configuration">
           Reset
@@ -54,7 +68,11 @@ export function ConfigPanel() {
       }
     >
       {/* ── Question shape ─────────────────────────────────────────────── */}
-      <Field label="Question" icon="pitch" hint="A chord root is chosen, then voiced from the selected qualities.">
+      <Field
+        label="Question"
+        icon="pitch"
+        hint="A chord root is chosen, then voiced from the selected qualities."
+      >
         <Segmented
           value={cfg.mode}
           onChange={(v) => setCfg('mode', v)}
@@ -67,7 +85,11 @@ export function ConfigPanel() {
         />
       </Field>
 
-      <Field label="Chord flavour" icon="layers">
+      <Field
+        label="Chord flavour"
+        icon="layers"
+        hint="A hard constraint on both modes: Chord picks the qualities that are voiced, Note asks only their chord tones."
+      >
         <Segmented<ChordFlavor>
           value={cfg.chordFlavor}
           onChange={(v) => setCfg('chordFlavor', v)}
@@ -82,7 +104,7 @@ export function ConfigPanel() {
       </Field>
 
       {cfg.chordFlavor === 'custom' ? (
-        <Field label="Explicit qualities" icon="eq" hint="Only these are drawn (intersected with the chord size).">
+        <Field label="Explicit qualities" icon="eq" hint="Only these are drawn (intersected with the chord sizes).">
           <div className="row row--wrap pt-chips">
             {ALL_QUALITIES.map((q) => {
               const on = cfg.qualities.includes(q);
@@ -108,38 +130,51 @@ export function ConfigPanel() {
         </Field>
       ) : null}
 
-      <div className="row pt-inline">
-        <Field label="Chord size" icon="eq" className="grow">
-          <div className="row">
-            <NumDrag
-              value={cfg.chordSize}
-              min={2}
-              max={5}
-              step={1}
-              unit="notes"
-              onChange={(v) => setCfg('chordSize', Math.round(v))}
-              width={104}
-            />
-            <Btn
-              size="sm"
-              variant="ghost"
-              icon="minus"
-              disabled={cfg.mode === 'note'}
-              onClick={() => setCfg('chordSize', Math.max(2, cfg.chordSize - 1))}
-            />
-            <Btn
-              size="sm"
-              variant="ghost"
-              icon="plus"
-              disabled={cfg.mode === 'note'}
-              onClick={() => setCfg('chordSize', Math.min(5, cfg.chordSize + 1))}
-            />
-          </div>
-        </Field>
-      </div>
+      <Field
+        label="Chord sizes"
+        icon="eq"
+        hint="Any mix — one question can be a triad, the next a seventh. At least one size stays on."
+      >
+        <div className="row row--wrap pt-chips pt-sizes" role="group" aria-label="Chord sizes">
+          {CHORD_SIZE_CHOICES.map((size) => {
+            const on = cfg.chordSizes.includes(size);
+            const shapes = qualitiesAtSize(cfg, size).length;
+            /* No quality of this flavour can be voiced that way (2 and 5 never
+               can): the size cannot be switched on, and it says why. A size
+               that is already on but has become empty stays switchable off so
+               the player is never locked out. */
+            const empty = shapes === 0;
+            const locked = on && cfg.chordSizes.length === 1;
+            return (
+              <button
+                key={size}
+                type="button"
+                className="chip pt-chip pt-sizechip"
+                data-on={on}
+                data-empty={empty || undefined}
+                aria-pressed={on}
+                disabled={locked || (!on && empty)}
+                title={
+                  locked
+                    ? 'At least one chord size stays on'
+                    : empty
+                      ? `No ${size}-note shape in this flavour`
+                      : `${size} notes · ${shapes} shape${shapes > 1 ? 's' : ''} in this flavour`
+                }
+                onClick={() => toggleSize(size)}
+              >
+                {size}
+                <em>{shapes}</em>
+              </button>
+            );
+          })}
+        </div>
+      </Field>
 
       <div className="pt-activeq">
-        <span className="t-micro">Active qualities · {active.length}</span>
+        <span className="t-micro">
+          Active qualities · {active.length} · pool {allowed.length}/12 pitch classes
+        </span>
         <div className="row row--wrap pt-chips">
           {active.map((q) => (
             <span key={q} className="pt-qtag" title={CHORD_INTERVALS[q].join(' · ')}>
@@ -149,7 +184,12 @@ export function ConfigPanel() {
         </div>
         {sizeMismatch ? (
           <Chip tone="amber" icon="alert">
-            No {cfg.chordSize}-note quality — generator uses the full set
+            No {cfg.chordSizes.filter((s) => qualitiesAtSize(cfg, s).length === 0).join('/')}-note quality — the full set is used
+          </Chip>
+        ) : null}
+        {scaleDropped ? (
+          <Chip tone="amber" icon="alert">
+            Scale excludes every allowed tone — the scale filter is ignored
           </Chip>
         ) : null}
       </div>
@@ -291,6 +331,13 @@ export function ConfigPanel() {
         icon="eye"
         on={cfg.instantFeedback}
         onChange={(v) => setCfg('instantFeedback', v)}
+      />
+      <ToggleRow
+        label="Audition on pick"
+        hint="Off (default): picking a key or tapping the dial is silent — only the dial's drag scrub sounds. On: every pick is confirmed audibly."
+        icon="speakerOff"
+        on={cfg.auditionOnPick}
+        onChange={(v) => setCfg('auditionOnPick', v)}
       />
 
       <Divider />

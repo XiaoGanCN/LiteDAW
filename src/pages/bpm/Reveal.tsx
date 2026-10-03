@@ -108,12 +108,12 @@ export function HistoryList({
   return (
     <ol className="bpm-history">
       <li className="bpm-history__row bpm-history__row--head" aria-hidden="true">
-        <span className="t-micro">#</span>
-        <span className="t-micro">Target</span>
-        <span className="t-micro" />
-        <span className="t-micro">You</span>
-        <span className="t-micro">Δ BPM</span>
-        <span className="t-micro">Δ %</span>
+        <span className="t-micro bpm-history__idx">#</span>
+        <span className="t-micro bpm-history__val">Target</span>
+        <span className="t-micro bpm-history__arrow" />
+        <span className="t-micro bpm-history__val bpm-history__val--ans">You</span>
+        <span className="t-micro bpm-history__err">Δ BPM</span>
+        <span className="t-micro bpm-history__err">Δ %</span>
       </li>
       {rows.map((r, i) => {
         const v = verdictOf(r, tolerance);
@@ -131,7 +131,7 @@ export function HistoryList({
             </span>
             <span className="bpm-history__val bpm-history__val--ans t-readout">{r.answer}</span>
             <span className="bpm-history__err t-readout">{signed(r.errorBpm)}</span>
-            <span className="bpm-history__err t-readout">{r.errorPct.toFixed(1)}</span>
+            <span className="bpm-history__err t-readout">{signedPct(r.errorBpm, r.errorPct)}</span>
           </li>
         );
       })}
@@ -178,7 +178,7 @@ export function RevealPanel({
   return (
     <div className="bpm-reveal" data-verdict={verdict}>
       <div className="bpm-reveal__head">
-        <div className="bpm-reveal__truth">
+        <div className="bpm-reveal__cell bpm-reveal__truth">
           <span className="t-micro">Correct tempo</span>
           <Readout value={round.target} unit="BPM" tone="amber" size="xl" />
           <span className="bpm-reveal__mark">
@@ -187,23 +187,38 @@ export function RevealPanel({
           </span>
         </div>
 
-        <div className="bpm-reveal__delta">
+        <div className="bpm-reveal__cell bpm-reveal__delta">
           <Chip tone={verdict === 'correct' ? 'green' : verdict === 'close' ? 'amber' : 'red'} icon={verdict === 'correct' ? 'check' : verdict === 'close' ? 'alert' : 'close'}>
             {VERDICT_LABEL[verdict]}
             {verdict === 'correct' ? ` · ±${cfg.tolerance} BPM` : ''}
           </Chip>
-          <div className="bpm-reveal__deltaval t-num" data-tone={verdict}>
-            {signed(round.errorBpm)} <em>BPM</em>
+          {/* Two labelled columns so Δ BPM and Δ % each sit over their own
+              number — the same column contract the history table uses. */}
+          <div className="bpm-reveal__deltagrid">
+            <span className="bpm-reveal__deltacell">
+              <span className="t-micro">Δ bpm</span>
+              <span className="bpm-reveal__deltaval t-num" data-tone={verdict}>
+                {signed(round.errorBpm)}
+              </span>
+            </span>
+            <span className="bpm-reveal__deltacell">
+              <span className="t-micro">Δ %</span>
+              <span className="bpm-reveal__deltapct t-num" data-tone={verdict}>
+                {signedPct(round.errorBpm, round.errorPct)}
+              </span>
+            </span>
           </div>
-          <div className="bpm-reveal__deltapct t-readout" data-tone={verdict}>
-            {signedPct(round.errorBpm, round.errorPct)} % {sign}
-          </div>
+          <span className="bpm-reveal__deltanote t-micro">
+            {sign} · target {round.target} BPM
+          </span>
         </div>
 
-        <div className="bpm-reveal__you">
+        <div className="bpm-reveal__cell bpm-reveal__you">
           <span className="t-micro">Your answer</span>
-          <Readout value={round.answer} unit="BPM" tone="cyan" size="lg" />
-          <span className="bpm-reveal__mark bpm-reveal__mark--dim">{answerMark.name}</span>
+          <Readout value={round.answer} unit="BPM" tone="cyan" size="xl" />
+          <span className="bpm-reveal__mark bpm-reveal__mark--dim">
+            <b>{answerMark.name}</b>
+          </span>
         </div>
       </div>
 
