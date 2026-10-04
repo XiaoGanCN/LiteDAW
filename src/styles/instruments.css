@@ -175,7 +175,21 @@
   display: flex;
   flex-direction: column;
   gap: 2px;
+  /* `min-width: 0` alone is not enough: the label is a flex row of icon+text and
+     needs its own shrink allowance, or a long caption pushes the rocker past the
+     panel edge. */
   min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+}
+.toggle-row > .rocker {
+  flex: 0 0 auto;
+  margin-left: var(--gap-label-control);
+}
+.toggle-row__label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .toggle-row__label {
   display: flex;

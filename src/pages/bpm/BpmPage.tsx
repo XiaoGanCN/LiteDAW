@@ -692,7 +692,6 @@ export function BpmPage() {
             endsAt={round?.endsAt ?? 0}
             live={visOn}
             previewBpm={previewBpm}
-            onToggleLive={() => setUi('visOn', !useBpm.getState().ui.visOn)}
           >
             {phase === 'revealed' && lastRound && (
               <div className="bpm-stage__verdict">
@@ -803,6 +802,9 @@ export function BpmPage() {
                 <Icon name="hand" size={26} />
                 <span className="bpm-tap__label">Tap</span>
                 <span className="bpm-tap__hint t-micro">or press space</span>
+                <span className="bpm-tap__why t-micro">
+                  Tap on every beat you hear. The median gap between taps becomes your answer — no counting.
+                </span>
               </button>
               <div className="bpm-tapinfo">
                 <Field label="Taps" hint="The first tap only starts the clock.">

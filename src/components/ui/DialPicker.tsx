@@ -360,7 +360,49 @@ export function DialPicker<T extends string | number>({
           );
         })}
 
-        {/* head — always present while the dial has detents, in both modes */}
+        {/* ── Selection handles ────────────────────────────────────────────
+            In multi mode every selected detent gets its OWN handle, so a chord
+            reads as a set of locked-in voices rather than one roving marker that
+            happens to sit on top of some lit arcs. Each handle is also a target:
+            pressing it removes that voice. */}
+        {mode === 'multi' &&
+          n > 0 &&
+          items.map((it, i) => {
+            if (!selectedSet.has(String(it.value))) return null;
+            const a = angleOf(i);
+            const [px, py] = pointAt(a, ringR);
+            const [ix, iy] = pointAt(a, ringR - 17);
+            const isCursor = i === activeIdx;
+            return (
+              <g
+                key={`sel-${String(it.value)}`}
+                className="dial__handle"
+                role="button"
+                aria-label={`Remove ${it.label}`}
+                aria-pressed="true"
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  commit(i);
+                }}
+              >
+                <circle cx={px} cy={py} r={14} fill="transparent" />
+                <path d={`M${ix} ${iy}L${px} ${py}`} stroke={accent} strokeWidth={isCursor ? 2.2 : 1.4} opacity={0.85} />
+                <circle
+                  cx={px}
+                  cy={py}
+                  r={isCursor ? 11 : 8.5}
+                  fill="#0b0f13"
+                  stroke={accent}
+                  strokeWidth={isCursor ? 2.6 : 2}
+                  style={{ filter: 'drop-shadow(0 0 5px var(--red))' }}
+                />
+                <circle cx={px} cy={py} r={isCursor ? 4 : 3} fill={accent} />
+              </g>
+            );
+          })}
+
+        {/* The roving head. In single mode it *is* the selection; in multi mode
+            it is the cursor, drawn alongside the per-voice handles above. */}
         {n > 0 && (
           <g
             style={{
@@ -369,6 +411,7 @@ export function DialPicker<T extends string | number>({
             }}
             filter="url(#dial-glow)"
             aria-hidden="true"
+            opacity={mode === 'multi' && selectedSet.has(String(items[activeIdx]?.value)) ? 0.35 : 1}
           >
             <circle r={11} fill="#0b0f13" stroke={accent} strokeWidth={2.4} />
             <circle r={4} fill={accent} />

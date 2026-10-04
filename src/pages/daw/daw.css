@@ -10,7 +10,7 @@
      must be minmax(0,1fr) too — a bare `auto` column grows to the widest
      child's max-content width and overflows narrow viewports. */
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto minmax(0, var(--tl-h, 340px)) minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, var(--tl-h, 340px)) auto minmax(0, 1fr);
   height: 100%;
   min-height: 0;
   overflow: hidden;
@@ -84,8 +84,16 @@
 .transport .seg {
   min-height: var(--tool-h);
 }
-.transport .input {
-  height: 24px;
+.transport .input,
+.transport input[type='number'] {
+  height: var(--tool-h);
+  /* Numeric spinners are wider than the field on some platforms and push the
+     BPM label out of line with the rest of the toolbar. */
+  padding-right: 4px;
+}
+.transport input[type='number']::-webkit-outer-spin-button,
+.transport input[type='number']::-webkit-inner-spin-button {
+  margin-left: 2px;
 }
 .transport .readout {
   padding: 4px 8px;
@@ -113,7 +121,6 @@
 }
 .tbtn:active:not(:disabled) {
   transform: translateY(1px) scale(0.94);
-  border-radius: var(--r-pill);
 }
 .tbtn:disabled {
   opacity: 0.3;
@@ -307,7 +314,6 @@
   border-color: var(--hair-3);
 }
 .trk__btn:active {
-  border-radius: var(--r-pill);
 }
 .trk__btn[data-on='true'][data-kind='mute'] {
   color: #1a1206;
@@ -929,8 +935,8 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  gap: 3px;
-  padding: 7px 4px 6px;
+  gap: 2px;
+  padding: 4px 3px 5px;
   border-radius: var(--r-sm);
   border: 1px solid var(--hair);
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.04), rgba(0, 0, 0, 0.28));
@@ -947,7 +953,6 @@
   border-color: var(--hair-3);
 }
 .swcell:active {
-  border-radius: var(--r-pill);
 }
 .swcell__label {
   font-family: var(--font-label);
@@ -1000,4 +1005,32 @@
   padding: 4px 6px;
   font-size: var(--fs-tiny);
   justify-content: center;
+}
+
+/* Direct drag of the timeline / deck boundary. Sits between the two grid rows. */
+.daw__splitter {
+  height: 7px;
+  margin: 0 var(--sp-3);
+  cursor: ns-resize;
+  touch-action: none;
+  position: relative;
+  z-index: 3;
+  flex: 0 0 auto;
+}
+.daw__splitter::after {
+  content: '';
+  position: absolute;
+  left: 50%;
+  top: 2px;
+  width: 46px;
+  height: 3px;
+  margin-left: -23px;
+  border-radius: 2px;
+  background: rgba(190, 210, 225, 0.2);
+  transition: background var(--t-base) linear, box-shadow var(--t-base) var(--ease-out);
+}
+.daw__splitter:hover::after,
+.daw__splitter:active::after {
+  background: var(--cyan);
+  box-shadow: var(--glow-cyan);
 }

@@ -14,7 +14,7 @@ import { transport } from '../../audio/dawEngine';
 import { buffers } from '../../daw/buffers';
 import { paintClipWave } from '../../audio/scopes';
 import { currentFxLevel } from '../../state/settings';
-import { useDaw, ZOOM_MAX, ZOOM_MIN, type Clip, type Track } from '../../state/daw';
+import { gridStepSeconds, useDaw, ZOOM_MAX, ZOOM_MIN, type Clip, type Track } from '../../state/daw';
 import { formatBarsBeats } from '../../audio/engine';
 
 const RULER_H = 50;
@@ -147,7 +147,9 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
     (ctx: CanvasRenderingContext2D, wCss: number, hCss: number) => {
       const fx = currentFxLevel();
       const beat = 60 / Math.max(20, state.bpm);
-      const gridSec = beat * (4 / state.view.gridDivision);
+      /* The SAME step the snapper uses, so a snapped position is always a drawn
+         line. */
+      const gridSec = gridStepSeconds(state);
 
       /* lane beds */
       layout.forEach((l, i) => {
@@ -162,13 +164,7 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
         ctx.fillRect(0, l.y + l.h, wCss, 1);
       });
 
-      /* grid: choose a division that stays legible at the current zoom */
-      const beatPx = beat * pxPerSec;
-      let div = gridSec;
-      if (beatPx > 260) div = gridSec / 4;
-      if (beatPx < 12) div = beat * 4;
-      if (beatPx < 3) div = beat * 16;
-      if (beatPx < 0.7) div = beat * 64;
+      const div = gridSec;
       const divPx = div * pxPerSec;
       const t0 = Math.floor(view.scroll / div) * div;
       const t1 = view.scroll + wCss / pxPerSec;
@@ -255,8 +251,14 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
             const spanRatio = Math.min(1 - offsetRatio, (clip.duration * clip.speed) / rec.duration);
             const waveTop = y + 14;
             const waveH = ch - 17;
-            if (pxPerSec > 900 && cw > 60) {
-              /* sample-accurate view at extreme zoom */
+            /* The envelope has a fixed number of buckets for the whole source,
+               so past a certain zoom there are FEWER buckets than pixels and the
+               waveform collapses to a single vertical line — which is what
+               "the clip's wave disappears when zoomed in too close" was. The
+               switch is therefore driven by bucket density, not by an arbitrary
+               px/s threshold. */
+            const bucketsVisible = Math.max(1, spanRatio * rec.peak.buckets);
+            if (bucketsVisible < cw) {
               paintSamples(ctx, rec.buffer, clip, x, waveTop, cw, waveH, pxPerSec, dim ? 0.35 : 0.9, color);
             } else {
               paintClipWave(
@@ -480,17 +482,25 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
     const MIN_LABEL_PX = 58;
     ctx.font = '10px "Share Tech Mono", monospace';
     let lastLabelX = Number.NEGATIVE_INFINITY;
+    /* Bar ticks are the accent colour. At a wide zoom there can be hundreds of
+       them across the strip, which turned the ruler into a dense red band, so a
+       bar only keeps its accent when it is far enough from the last accented
+       bar to read as a distinct mark. */
+    const MIN_BAR_ACCENT_PX = 7;
+    let lastAccentX = Number.NEGATIVE_INFINITY;
     for (let t = t0; t <= t1; t += stepSec) {
       const x = Math.round(timeToX(t)) + 0.5;
       const barSec = beat * state.numerator;
-      const isBar = Math.abs(t / barSec - Math.round(t / barSec)) < 1e-6;
-      ctx.strokeStyle = isBar ? 'rgba(199,15,40,0.75)' : 'rgba(190,215,235,0.3)';
+      const onBar = Math.abs(t / barSec - Math.round(t / barSec)) < 1e-6;
+      const accent = onBar && x - lastAccentX >= MIN_BAR_ACCENT_PX;
+      if (accent) lastAccentX = x;
+      ctx.strokeStyle = accent ? 'rgba(199,15,40,0.75)' : 'rgba(190,215,235,0.3)';
       ctx.beginPath();
-      ctx.moveTo(x, isBar ? 4 : SCALE_H - 9);
+      ctx.moveTo(x, accent ? 4 : SCALE_H - 9);
       ctx.lineTo(x, SCALE_H);
       ctx.stroke();
       if (x - lastLabelX >= MIN_LABEL_PX) {
-        ctx.fillStyle = isBar ? 'rgba(255,120,140,0.95)' : 'rgba(160,185,205,0.7)';
+        ctx.fillStyle = accent ? 'rgba(255,120,140,0.95)' : 'rgba(160,185,205,0.7)';
         ctx.fillText(fmtTime(t, pxPerSec), x + 3, 13);
         lastLabelX = x;
       }
@@ -984,7 +994,7 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
     const raw = timeAtClientX(e.clientX);
     /* The playhead obeys the snap setting too, but must never snap to itself. */
     const st = useDaw.getState();
-    const t = st.view.snap === 'off' ? raw : st.snapValue(raw, [], { includePlayhead: false });
+    const t = st.snapPlayhead(raw);
     const now = performance.now();
     /* Throttle only drives the audio grain; the transport position is committed
        on every event, and `flush` guarantees the release position is not lost. */
@@ -1117,7 +1127,7 @@ export function Timeline({ onFilesDropped, onSeek, onScrub }: Props) {
             if (rulerMode.current === 'loopL' || rulerMode.current === 'loopR') {
               if (!e.buttons) return;
               const raw = timeAtClientX(e.clientX);
-              const t = st.view.snap === 'off' ? raw : st.snapValue(raw, [], { includePlayhead: false });
+              const t = st.snapPlayhead(raw);
               const MIN_LOOP = 0.05;
               if (rulerMode.current === 'loopL') {
                 st.setTransport({ loopStart: Math.max(0, Math.min(t, st.loopEnd - MIN_LOOP)) });

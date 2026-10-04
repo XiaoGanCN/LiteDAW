@@ -358,6 +358,19 @@ export function ConfigPanel() {
         />
         <div className="col grow pt-adapt__txt">
           <span className="t-label">Weakness weighting</span>
+          {/* A slider, matching the Tempo trainer's adaptivity control: the two
+              modules expose the same concept, so they read the same way. The
+              knob beside it stays for fine adjustment. */}
+          <input
+            className="range range--slim"
+            type="range"
+            min={0}
+            max={1}
+            step={0.05}
+            value={cfg.adaptivity}
+            onChange={(e) => setCfg('adaptivity', Number(e.target.value))}
+            aria-label="Adaptivity slider"
+          />
           <span className="field__hint">
             {cfg.adaptivity <= 0.02
               ? '0.00 = uniform random questions.'

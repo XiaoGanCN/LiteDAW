@@ -645,6 +645,34 @@ export function DawPage() {
         />
       </div>
 
+      {/* Direct manipulation of the deck height: drag the boundary. Complements
+          the numeric slider in the deck toolbar. */}
+      <div
+        className="daw__splitter"
+        role="separator"
+        aria-orientation="horizontal"
+        aria-label="Drag to resize the timeline"
+        title="Drag to resize the timeline"
+        onPointerDown={(e) => {
+          e.preventDefault();
+          (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+          const startY = e.clientY;
+          const startH = timelineH;
+          const el = e.currentTarget as HTMLElement;
+          const move = (ev: PointerEvent) => {
+            setTimelineH(Math.max(180, Math.min(760, Math.round(startH + (ev.clientY - startY)))));
+          };
+          const up = () => {
+            el.removeEventListener('pointermove', move);
+            el.removeEventListener('pointerup', up);
+            el.removeEventListener('pointercancel', up);
+          };
+          el.addEventListener('pointermove', move);
+          el.addEventListener('pointerup', up);
+          el.addEventListener('pointercancel', up);
+        }}
+      />
+
       {/* ── Timeline ──────────────────────────────────────────────────── */}
       <Timeline
         onFilesDropped={(files, trackId, at) => void importFiles(files, trackId, at)}

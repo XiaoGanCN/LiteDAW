@@ -197,8 +197,35 @@ function normalizeConfig(raw: LegacyConfig | undefined): PitchConfig {
 
 /* ── Question generation helpers ───────────────────────────────────────── */
 
-const MAJOR_SET: ChordQuality[] = ['maj', 'maj7', 'dom7', 'aug', 'sus4', 'sus2', 'six', 'add9', 'power'];
-const MINOR_SET: ChordQuality[] = ['min', 'min7', 'dim', 'min7b5', 'min6', 'power'];
+const MAJOR_SET: ChordQuality[] = [
+  'fifth',
+  'octave',
+  'maj',
+  'maj7',
+  'dom7',
+  'aug',
+  'sus4',
+  'sus2',
+  'six',
+  'add9',
+  'power',
+  'maj9',
+  'dom9',
+  'six9',
+  'ninesus4',
+];
+const MINOR_SET: ChordQuality[] = [
+  'fifth',
+  'octave',
+  'min',
+  'min7',
+  'dim',
+  'min7b5',
+  'min6',
+  'power',
+  'min9',
+  'min7add11',
+];
 
 /** Every pitch class, ascending. */
 export const ALL_PCS: number[] = Array.from({ length: 12 }, (_, i) => i);
@@ -311,15 +338,26 @@ export function answerablePcs(cfg: PitchConfig): number[] {
  * and the result is guaranteed strictly ascending with no repeats.
  */
 export function voiceChord(rootMidi: number, quality: ChordQuality, inversions = 0): number[] {
-  const base = CHORD_INTERVALS[quality].map((i) => rootMidi + i);
-  let v = [...new Set(base)].sort((a, b) => a - b);
-  for (let k = 0; k < inversions && v.length > 2; k++) {
-    const next = [...v];
-    next[0] += 12;
-    next.sort((a, b) => a - b);
-    const uniq = [...new Set(next)];
-    if (uniq.length < 2) break;
-    v = uniq;
+  const intervals = CHORD_INTERVALS[quality];
+  /* The interval table read from the root already yields exactly one distinct
+     MIDI number per named voice — `power` [0,7,12] and `add9` [0,4,7,14] are
+     distinct even though they repeat a pitch class an octave up. */
+  const base = intervals.map((i) => rootMidi + i).sort((a, b) => a - b);
+  if (inversions <= 0 || base.length < 3) return base;
+
+  /* Invert by lifting the LOWEST voice an octave, `inversions` times.
+     A lifted voice that would land on one already present is pushed up another
+     octave instead of being deduped away: the previous version collapsed
+     [r, r+7, r+12] to two notes, so a "3-note" power chord played two voices and
+     a configured size could silently disagree with what was heard. The pitch
+     class set — everything grading cares about — is unchanged either way. */
+  let v = [...base];
+  for (let k = 0; k < inversions; k++) {
+    const [low, ...rest] = v;
+    const occupied = new Set(rest);
+    let lifted = low + 12;
+    while (occupied.has(lifted)) lifted += 12;
+    v = [...rest, lifted].sort((a, b) => a - b);
   }
   return v;
 }

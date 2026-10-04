@@ -35,7 +35,6 @@ export interface BeatVisualiserProps {
    * instrument between live motion and pure listening. Omit it and the plate
    * renders as inert structure instead of pretending to be a button.
    */
-  onToggleLive?: () => void;
   children?: ReactNode;
 }
 
@@ -45,12 +44,6 @@ const CY = 150;
 const RING = 108;
 const ARCR = 78;
 const FACE = 64;
-const PIVOT_Y = 232;
-const AX = 86;
-const TIP_Y = 70;
-const CW_Y = PIVOT_Y + 34;
-const ARM_AMP = (26 * Math.PI) / 180;
-const TRAIL = 5;
 const MAX_BEATS = 16;
 const MAX_SUB = 8;
 const ARC_C = TAU * ARCR;
@@ -72,14 +65,10 @@ export function BeatVisualiser({
   endsAt,
   live,
   previewBpm,
-  onToggleLive,
   children,
 }: BeatVisualiserProps) {
   const lampRefs = useRef<(SVGGElement | null)[]>([]);
   const subRefs = useRef<(SVGLineElement | null)[]>([]);
-  const ghostRefs = useRef<(SVGGElement | null)[]>([]);
-  const rodRef = useRef<SVGGElement | null>(null);
-  const cwRef = useRef<SVGGElement | null>(null);
   const arcRef = useRef<SVGCircleElement | null>(null);
   const barRef = useRef<SVGTextElement | null>(null);
   const countRef = useRef<SVGTextElement | null>(null);
@@ -220,34 +209,13 @@ export function BeatVisualiser({
       for (let i = 0; i < MAX_BEATS; i++) if (st.k[i] > 0) st.k[i] = Math.max(0, st.k[i] - dk);
       for (let i = 0; i < st.ks.length; i++) if (st.ks[i] > 0) st.ks[i] = Math.max(0, st.ks[i] - ds);
 
-      /* ── Pendulum: click happens at the extremity of the swing. ──────── */
-      const ampTarget = clocked ? 1 : p.phase === 'idle' ? 0.4 : p.phase === 'revealed' ? 0 : 0.22;
-      st.amp += (ampTarget - st.amp) * Math.min(1, dt * 4.5);
-      const angle = -(ARM_AMP * st.amp * Math.cos(TAU * frac) * 180) / Math.PI;
-
       if (p.live) {
-        const rot = `rotate(${angle.toFixed(2)} ${AX} ${PIVOT_Y})`;
-        rodRef.current?.setAttribute('transform', rot);
-        cwRef.current?.setAttribute('transform', rot);
-        if (!st.trail.length || Math.abs(st.trail[st.trail.length - 1] - angle) > 0.25) {
-          st.trail.push(angle);
-          if (st.trail.length > TRAIL) st.trail.shift();
-        }
-        for (let g = 0; g < ghostRefs.current.length; g++) {
-          const el = ghostRefs.current[g];
-          if (!el) continue;
-          const a = st.trail[Math.max(0, st.trail.length - 2 - g)] ?? angle;
-          el.setAttribute('transform', `rotate(${a.toFixed(2)} ${AX} ${PIVOT_Y})`);
-        }
-
         /* ── Beat lamps. ─────────────────────────────────────────────── */
         const n = Math.max(1, p.numerator);
-        let hottest = 0;
         for (let i = 0; i < MAX_BEATS; i++) {
           const el = lampRefs.current[i];
           if (!el) continue;
           if (i >= n) continue;
-          if (st.k[i] > hottest) hottest = st.k[i];
           const q = Math.round(st.k[i] * 24);
           if (q !== st.q[i]) {
             st.q[i] = q;
@@ -262,12 +230,6 @@ export function BeatVisualiser({
           lampRefs.current[st.cur]?.removeAttribute('data-cur');
           st.cur = -1;
         }
-        const cwq = Math.round(hottest * 12);
-        if (cwq !== st.cwq) {
-          st.cwq = cwq;
-          cwRef.current?.style.setProperty('--k', (cwq / 12).toFixed(3));
-        }
-
         /* ── Subdivision ticks. ──────────────────────────────────────── */
         for (let i = 0; i < st.ks.length; i++) {
           const el = subRefs.current[i];
@@ -365,73 +327,12 @@ export function BeatVisualiser({
             </radialGradient>
           </defs>
 
-          {/* ── Pendulum ─────────────────────────────────────────────── */}
-          {Array.from({ length: TRAIL - 1 }, (_, i) => (
-            <g
-              key={i}
-              className="bpm-ghost"
-              style={{ opacity: 0.26 - i * 0.05 }}
-              ref={(el) => {
-                ghostRefs.current[i] = el;
-              }}
-            >
-              <line x1={AX} y1={PIVOT_Y} x2={AX} y2={TIP_Y} className="bpm-rod bpm-rod--ghost" />
-            </g>
-          ))}
-          <g
-            className="bpm-rodgroup"
-            ref={(el) => {
-              rodRef.current = el;
-            }}
-          >
-            <line x1={AX} y1={PIVOT_Y} x2={AX} y2={TIP_Y} className="bpm-rod" />
-            <line x1={AX - 1.1} y1={PIVOT_Y - 4} x2={AX - 1.1} y2={TIP_Y + 4} className="bpm-rod__hi" />
-            <line x1={AX} y1={PIVOT_Y} x2={AX} y2={CW_Y} className="bpm-rod bpm-rod--tail" />
-            <rect x={AX - 13} y={88} width={26} height={36} rx={3} className="bpm-bob" />
-            <path d={`M${AX - 13} 100h26M${AX - 13} 112h26`} className="bpm-bob-line" />
-          </g>
-          <g
-            className="bpm-cwgroup"
-            ref={(el) => {
-              cwRef.current = el;
-            }}
-          >
-            <circle cx={AX} cy={CW_Y} r={13} className="bpm-cw-halo" />
-            <circle cx={AX} cy={CW_Y} r={7} className="bpm-cw" />
-          </g>
-          <path d={`M${AX - 17} ${PIVOT_Y + 9}L${AX} ${PIVOT_Y - 5}L${AX + 17} ${PIVOT_Y + 9}`} className="bpm-bracket" />
-          <circle cx={AX} cy={PIVOT_Y} r={5.5} className="bpm-pivot" />
-
-          {/* ── Plinth: the pendulum's power plate. A real switch, not an
-                 inert rectangle — it toggles the whole instrument. ────── */}
-          <g
-            className="bpm-plinth"
-            data-on={live ? 'true' : 'false'}
-            data-interactive={onToggleLive ? 'true' : undefined}
-            role={onToggleLive ? 'switch' : undefined}
-            aria-checked={onToggleLive ? live : undefined}
-            aria-label={onToggleLive ? 'Beat visualiser' : undefined}
-            tabIndex={onToggleLive ? 0 : undefined}
-            onClick={onToggleLive}
-            onKeyDown={(e) => {
-              if (!onToggleLive) return;
-              if (e.key === 'Enter' || e.code === 'Space') {
-                e.preventDefault();
-                onToggleLive();
-              }
-            }}
-          >
-            <rect x={AX - 46} y={268} width={92} height={20} rx={3} className="bpm-plinth__plate" />
-            <circle cx={AX - 34} cy={278} r={3.4} className="bpm-plinth__led" />
-            <text x={AX + 5} y={279} className="bpm-plinth__cap" textAnchor="middle">
-              {live ? 'PENDULUM ON' : 'PENDULUM OFF'}
-            </text>
-          </g>
-          {/* Sits clear of the plinth caption below it — at 262 the two labels
-              collided into an unreadable smear at every rendered size. */}
-          <text x={AX} y={251} className="bpm-base__cap" textAnchor="middle">
-            TEMPO PENDULUM
-          </text>
+          {/* The pendulum was removed on request. The beat ring below carries
+              the whole visualisation on its own: it already shows the beat in
+              the bar, the bar itself and the subdivision pulses, so the extra
+              swinging arm was decoration that competed with the ring for
+              attention — and its plinth was a second on/off switch for the same
+              thing the header toggle already controls. */}
 
           {/* ── Dial ─────────────────────────────────────────────────── */}
           <circle cx={CX} cy={CY} r={RING + 26} className="bpm-dial__rim" />

@@ -165,15 +165,31 @@ export type ChordQuality =
   | 'six'
   | 'min6'
   | 'add9'
-  | 'power';
+  | 'power'
+  | 'fifth'
+  | 'octave'
+  | 'maj9'
+  | 'dom9'
+  | 'min9'
+  | 'six9'
+  | 'ninesus4'
+  | 'min7add11';
 
 export const CHORD_INTERVALS: Record<ChordQuality, number[]> = {
+  /* ── Two voices ──────────────────────────────────────────────────────────
+     Without these the picker's "2" was permanently unreachable: every other
+     quality has three or more voices. */
+  fifth: [0, 7],
+  octave: [0, 12],
+  /* ── Three voices ────────────────────────────────────────────────────── */
   maj: [0, 4, 7],
   min: [0, 3, 7],
   dim: [0, 3, 6],
   aug: [0, 4, 8],
   sus4: [0, 5, 7],
   sus2: [0, 2, 7],
+  power: [0, 7, 12],
+  /* ── Four voices ─────────────────────────────────────────────────────── */
   maj7: [0, 4, 7, 11],
   min7: [0, 3, 7, 10],
   dom7: [0, 4, 7, 10],
@@ -181,16 +197,26 @@ export const CHORD_INTERVALS: Record<ChordQuality, number[]> = {
   six: [0, 4, 7, 9],
   min6: [0, 3, 7, 9],
   add9: [0, 4, 7, 14],
-  power: [0, 7, 12],
+  /* ── Five voices ─────────────────────────────────────────────────────────
+     Likewise, nothing had five voices, so "5" could never be switched on. */
+  maj9: [0, 4, 7, 11, 14],
+  dom9: [0, 4, 7, 10, 14],
+  min9: [0, 3, 7, 10, 14],
+  six9: [0, 4, 7, 9, 14],
+  ninesus4: [0, 5, 7, 10, 14],
+  min7add11: [0, 3, 7, 10, 17],
 };
 
 export const CHORD_LABELS: Record<ChordQuality, string> = {
+  fifth: 'Open 5th',
+  octave: 'Octave',
   maj: 'Major',
   min: 'Minor',
   dim: 'Dim',
   aug: 'Aug',
   sus4: 'Sus4',
   sus2: 'Sus2',
+  power: '5',
   maj7: 'Maj7',
   min7: 'Min7',
   dom7: 'Dom7',
@@ -198,7 +224,12 @@ export const CHORD_LABELS: Record<ChordQuality, string> = {
   six: '6',
   min6: 'm6',
   add9: 'Add9',
-  power: '5',
+  maj9: 'Maj9',
+  dom9: 'Dom9',
+  min9: 'Min9',
+  six9: '6/9',
+  ninesus4: '9sus4',
+  min7add11: 'm11',
 };
 
 export function chordNotes(rootMidi: number, quality: ChordQuality): number[] {
@@ -208,6 +239,8 @@ export function chordNotes(rootMidi: number, quality: ChordQuality): number[] {
 export function chordName(rootMidi: number, quality: ChordQuality): string {
   const root = PC[((rootMidi % 12) + 12) % 12];
   const short: Record<ChordQuality, string> = {
+    fifth: '5',
+    octave: '8ve',
     maj: '',
     min: 'm',
     dim: 'dim',
@@ -222,6 +255,12 @@ export function chordName(rootMidi: number, quality: ChordQuality): string {
     min6: 'm6',
     add9: 'add9',
     power: '5',
+    maj9: 'maj9',
+    dom9: '9',
+    min9: 'm9',
+    six9: '6/9',
+    ninesus4: '9sus4',
+    min7add11: 'm11',
   };
   return `${root}${short[quality]}`;
 }

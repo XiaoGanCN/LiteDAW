@@ -20,3 +20,4 @@ android/app/src/main/res/xml/config.xml
 
 token.txt
 .verify-daw
+.model-test

@@ -93,6 +93,8 @@ export interface DawState {
     autoScroll: boolean;
     snap: SnapMode;
     gridDivision: number;
+    /** Derive the grid step from zoom (true) or pin it to `gridDivision`. */
+    gridAuto: boolean;
     waveformZoom: number;
     selectedTrackId: string | null;
   };
@@ -138,6 +140,8 @@ export interface DawState {
   trackAudible: (id: string) => boolean;
   projectDuration: () => number;
   snapValue: (t: number, excludeClipIds?: string[], opts?: { includePlayhead?: boolean }) => number;
+  /** Playhead snapping: always the grid, magnetically clip edges and zero. */
+  snapPlayhead: (t: number) => number;
   /** Trims overlaps on the given tracks, keeping `priorityIds` intact. */
   settleOverlaps: (trackIds: string[], priorityIds?: string[]) => void;
   /** First gap on a track able to hold `duration`, at or after `from`. */
@@ -191,6 +195,30 @@ export const makeTrack = (index: number, name?: string): Track => ({
 
 const MAX_HISTORY = 60;
 
+/**
+ * The grid step actually in force, in SECONDS — shared by the painter and by
+ * snapping so the two can never disagree.
+ *
+ * The timeline coarsens its drawn grid as you zoom out (a 1/16 grid at 0.6 px/s
+ * would be a solid block), but snapping kept using the raw `gridDivision`, so at
+ * a wide zoom the playhead landed on lines that were not on screen and the grid
+ * appeared sparser than the thing it snapped to.
+ *
+ * `gridAuto` (default) derives the step from the zoom. Switching it off pins the
+ * grid to `gridDivision` at every zoom — the "make it customizable" half.
+ */
+export function gridStepSeconds(s: Pick<DawState, 'bpm' | 'view'>): number {
+  const beat = 60 / Math.max(20, s.bpm);
+  const base = beat * (4 / Math.max(1, s.view.gridDivision));
+  if (!s.view.gridAuto) return base;
+  const beatPx = beat * s.view.pxPerSec;
+  if (beatPx > 260) return base / 4;
+  if (beatPx < 0.7) return beat * 64;
+  if (beatPx < 3) return beat * 16;
+  if (beatPx < 12) return beat * 4;
+  return base;
+}
+
 export const useDaw = create<DawState>()(
   persist(
     (set, get) => ({
@@ -216,6 +244,7 @@ export const useDaw = create<DawState>()(
         autoScroll: true,
         snap: 'grid',
         gridDivision: 4,
+        gridAuto: true,
         waveformZoom: 1,
         selectedTrackId: null,
       },
@@ -515,13 +544,38 @@ export const useDaw = create<DawState>()(
         return t;
       },
 
+      /**
+       * Where the playhead lands. Grid snapping is unconditional; clip edges,
+       * zero and the loop bounds are magnets within a pixel threshold, so the
+       * playhead can be parked exactly on a clip boundary.
+       */
+      snapPlayhead: (t) => {
+        const s = get();
+        if (s.view.snap === 'off') return Math.max(0, t);
+        const step = gridStepSeconds(s);
+        const gridT = Math.max(0, Math.round(t / step) * step);
+        const threshold = 10 / s.view.pxPerSec;
+        const magnets = [gridT, 0];
+        s.clips.forEach((c) => magnets.push(c.start, c.start + c.duration));
+        if (s.loopOn) magnets.push(s.loopStart, s.loopEnd);
+        let best = gridT;
+        let bestD = Math.abs(gridT - t);
+        magnets.forEach((m) => {
+          const d = Math.abs(m - t);
+          if (d < bestD) {
+            bestD = d;
+            best = m;
+          }
+        });
+        return Math.max(0, bestD <= threshold ? best : gridT);
+      },
+
       /** Snaps a time to the grid and/or nearby clip edges. */
       snapValue: (t, excludeClipIds = [], opts) => {
         const s = get();
-        const { snap, gridDivision, pxPerSec } = s.view;
+        const { snap, pxPerSec } = s.view;
         if (snap === 'off') return Math.max(0, t);
-        const beat = 60 / Math.max(20, s.bpm);
-        const grid = beat * (4 / gridDivision);
+        const grid = gridStepSeconds(s);
         const threshold = 8 / pxPerSec;
         /* Grid snapping is unconditional: a grid line is always the closest
            legal position, so quantising to the nearest one is the whole point
@@ -558,7 +612,7 @@ export const useDaw = create<DawState>()(
     }),
     {
       name: 'litedaw.project',
-      version: 3,
+      version: 4,
       partialize: (s) => ({
         projectName: s.projectName,
         bpm: s.bpm,

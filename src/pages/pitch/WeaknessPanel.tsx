@@ -428,7 +428,7 @@ function WeakRow({
         onClick={onDrill}
         title={active ? 'End this drill and return to the full pool' : `Drill ${PC_NAMES[pair.a]} ↔ ${PC_NAMES[pair.b]}`}
       >
-        {active ? 'Drill on' : 'Drill'}
+        Drill
       </Btn>
     </li>
   );

@@ -638,6 +638,9 @@
 
 .input {
   height: 30px;
+  /* `min-width: 0` so a long value cannot widen a flex row, and a fixed
+     box-sizing so entering edit mode never changes the control's footprint. */
+  min-width: 0;
   padding: 0 10px;
   border-radius: var(--r-sm);
   background: linear-gradient(180deg, #04070a, #0b1014);

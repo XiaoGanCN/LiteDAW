@@ -844,7 +844,15 @@ function SessionTab({ onExport }: { onExport: () => void }) {
         </Btn>
       </div>
 
-      <Field label="Grid division" icon="magnet" hint="Snap resolution in note values per beat">
+      <Field
+        label="Grid division"
+        icon="magnet"
+        hint={
+          s.view.gridAuto
+            ? 'Auto: the grid coarsens as you zoom out, and snapping follows it exactly. Turn Auto off to pin the division at every zoom.'
+            : 'Pinned: this division is drawn and snapped at every zoom. Zoom out far and the grid becomes dense.'
+        }
+      >
         <Segmented
           value={s.view.gridDivision}
           onChange={(v) => s.setView({ gridDivision: v })}
@@ -856,6 +864,20 @@ function SessionTab({ onExport }: { onExport: () => void }) {
             { value: 16, label: '1/16' },
           ]}
         />
+        <div className="row" style={{ gap: 6, marginTop: 6 }}>
+          <Btn
+            size="sm"
+            variant={s.view.gridAuto ? 'primary' : 'ghost'}
+            icon="grid"
+            className="grow"
+            onClick={() => s.setView({ gridAuto: !s.view.gridAuto })}
+          >
+            {s.view.gridAuto ? 'Auto density' : 'Pinned density'}
+          </Btn>
+          <span className="field__hint" style={{ margin: 0 }}>
+            {s.view.gridAuto ? 'follows zoom' : 'fixed at every zoom'}
+          </span>
+        </div>
       </Field>
 
       <Well className="col" style={{ gap: 3 }}>

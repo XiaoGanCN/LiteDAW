@@ -253,7 +253,6 @@
   box-shadow: var(--glow-cyan);
 }
 .pt-auto:active {
-  border-radius: var(--r-pill);
 }
 
 /* ── Answer surface ────────────────────────────────────────────────────── */
@@ -856,12 +855,17 @@
     color var(--t-base) linear,
     box-shadow var(--t-base) linear;
 }
+/* Latched state changes COLOUR only. It used to round into a pill, and the
+   label grew from "Drill" to "Drill on", so pressing it resized the control
+   under the pointer. */
+.pt-drill {
+  min-width: 76px;
+}
 .pt-drill[data-on] {
   background: linear-gradient(180deg, rgba(255, 174, 26, 0.24), rgba(168, 108, 0, 0.16));
   border-color: rgba(255, 174, 26, 0.55);
   color: var(--amber-hi);
   box-shadow: var(--glow-amber);
-  border-radius: var(--r-pill);
 }
 .pt-drill[data-on] .btn__cap {
   text-shadow: 0 0 10px rgba(255, 209, 102, 0.45);
@@ -990,7 +994,6 @@
 }
 .pt-chip:active {
   transform: translateY(1px);
-  border-radius: var(--r-pill);
 }
 .pt-chip[data-on='true'] {
   background: linear-gradient(180deg, rgba(31, 208, 230, 0.24), rgba(8, 127, 146, 0.14));

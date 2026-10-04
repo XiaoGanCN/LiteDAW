@@ -30,8 +30,6 @@ export interface KnobProps {
 
 const SWEEP = 270; // degrees of travel
 const START = -135;
-/** Glow headroom in user units around the knob's 0..size drawing box. */
-const KNOB_PAD = 7;
 
 export function Knob({
   value,
@@ -132,17 +130,12 @@ export function Knob({
           if (e.key === 'ArrowDown' || e.key === 'ArrowLeft') onChange(clamp(quant(value - step)));
         }}
       >
-        {/* The viewBox is inflated by KNOB_PAD on every side. The value arc and
-            the pointer carry a drop-shadow that reaches past the 270° travel
-            radius, and a tight 0..size box cropped that glow at the edges —
-            most visibly on the smallest knobs, where the shadow is a large
-            fraction of the dial. Drawing coordinates are unchanged. */}
-        <svg
-          width={size}
-          height={size}
-          viewBox={`${-KNOB_PAD} ${-KNOB_PAD} ${size + KNOB_PAD * 2} ${size + KNOB_PAD * 2}`}
-          style={{ overflow: 'visible' }}
-        >
+        {/* The value arc and pointer carry a drop-shadow (an SVG filter) that
+            reaches past the 270° travel radius, and the default 0..size viewport
+            cropped it at the edges — most visibly on the smallest knobs.
+            `overflow: visible` lets the glow paint outside the viewBox while the
+            viewBox itself stays 1:1, so the dial is not scaled down. */}
+        <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} style={{ overflow: 'visible' }}>
           <defs>
             <radialGradient id={`kb-${size}-${label ?? ''}`} cx="38%" cy="26%" r="82%">
               <stop offset="0%" stopColor="#5c666f" />

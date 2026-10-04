@@ -17,7 +17,8 @@
     "icons": "node scripts/gen-icons.mjs",
     "fonts": "node scripts/fetch-fonts.mjs",
     "check:deployed": "node scripts/check-deployed.mjs",
-    "verify:daw": "node scripts/verify-daw.mjs"
+    "verify:daw": "node scripts/verify-daw.mjs",
+    "verify:model": "vite build --config vite.model.config.ts --logLevel warn && node .model-test/entry.js"
   },
   "dependencies": {
     "@capacitor/android": "^8.5.2",

@@ -20,14 +20,21 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 /** Silence before the dial zooms in for fine adjustment. */
 const DWELL_MS = 400;
-/** Degrees of head travel per 1 BPM while zoomed. */
-const FINE_DEG_PER_BPM = 3;
-/** Degrees of head travel per 1 BPM while coarse. */
-const COARSE_DEG_PER_BPM = 0.82;
-/** Half-width of the zoom window, in BPM. */
-const FINE_SPAN = 15;
 const SWEEP = 300;
 const START = -150;
+/** Half-width of the zoom window, in BPM. */
+const FINE_SPAN = 15;
+/**
+ * Degrees of head travel per 1 BPM while zoomed.
+ *
+ * Derived from the window rather than hand-picked: the zoomed scale has to fill
+ * the same 300 degrees that the coarse scale does. The previous fixed value of
+ * 3 put 10 BPM across 30 degrees against the coarse scale's 25 — a "zoom" that
+ * was barely distinguishable from the scale it was zooming into.
+ */
+const FINE_DEG_PER_BPM = SWEEP / (FINE_SPAN * 2);
+/** Degrees of head travel per 1 BPM while coarse (set per-range below). */
+const COARSE_DEG_PER_BPM = 0.82;
 
 const clamp = (v: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, v));
 
@@ -37,6 +44,42 @@ function shortDelta(a: number, b: number) {
   if (d > 180) d -= 360;
   if (d < -180) d += 360;
   return d;
+}
+
+/** One spoke of the scale, drawn as a rotated group so it can animate. */
+function Mark({
+  m,
+  i,
+  fine,
+  pointAt,
+  tickInner,
+  tickOuter,
+  labelR,
+}: {
+  m: { v: number; deg: number };
+  i: number;
+  fine: boolean;
+  pointAt: (deg: number, radius: number) => readonly [number, number];
+  tickInner: number;
+  tickOuter: number;
+  labelR: number;
+}) {
+  const [x0, y0] = pointAt(m.deg, tickInner);
+  const [x1, y1] = pointAt(m.deg, tickOuter);
+  const [lx, ly] = pointAt(m.deg, labelR);
+  const major = i % 5 === 0;
+  return (
+    <g
+      className="bpm-dial__mark"
+      data-fine={fine ? 'true' : undefined}
+      style={{ transition: 'opacity 240ms var(--ease-out)' }}
+    >
+      <line x1={x0} y1={y0} x2={x1} y2={y1} stroke={major ? 'var(--alu-300)' : 'rgba(190,210,225,.32)'} strokeWidth={major ? 2 : 1.2} />
+      <text x={lx} y={ly} textAnchor="middle" dominantBaseline="middle" className="dial__lab bpm-dial__tick" data-major={major || undefined}>
+        {Math.round(m.v)}
+      </text>
+    </g>
+  );
 }
 
 export interface BpmDialProps {
@@ -302,20 +345,21 @@ export function BpmDial({
           />
         )}
 
-        {marks.map((m, i) => {
-          const [x0, y0] = pointAt(m.deg, tickInner);
-          const [x1, y1] = pointAt(m.deg, tickOuter);
-          const [lx, ly] = pointAt(m.deg, labelR);
-          const major = i % 5 === 0;
-          return (
-            <g key={`m${i}`} className="bpm-dial__mark">
-              <line x1={x0} y1={y0} x2={x1} y2={y1} stroke={major ? 'var(--alu-300)' : 'rgba(190,210,225,.32)'} strokeWidth={major ? 2 : 1.2} />
-              <text x={lx} y={ly} textAnchor="middle" dominantBaseline="middle" className="dial__lab bpm-dial__tick" data-major={major || undefined}>
-                {Math.round(m.v)}
-              </text>
-            </g>
-          );
-        })}
+        {/* Both scales are mounted at once and cross-faded, and their marks
+            carry a CSS rotation transition, so coarse → fine reads as the ring
+            re-scaling rather than as a hard swap. */}
+        <g className="bpm-dial__scale" data-layer="coarse" aria-hidden={fine}>
+          {!fine &&
+            marks.map((m, i) => (
+              <Mark key={`c${i}`} m={m} i={i} fine={false} pointAt={pointAt} tickInner={tickInner} tickOuter={tickOuter} labelR={labelR} />
+            ))}
+        </g>
+        <g className="bpm-dial__scale" data-layer="fine" aria-hidden={!fine}>
+          {fine &&
+            marks.map((m, i) => (
+              <Mark key={`f${i}`} m={m} i={i} fine pointAt={pointAt} tickInner={tickInner} tickOuter={tickOuter} labelR={labelR} />
+            ))}
+        </g>
 
         {/* head */}
         <g
